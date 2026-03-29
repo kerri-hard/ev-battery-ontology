@@ -1,0 +1,29 @@
+{
+  "phase1": {
+    "min_nodes": 70,
+    "min_edges": 180,
+    "min_completeness_score": 75
+  },
+  "phase2": {
+    "min_healing_iterations": 3,
+    "min_incidents": 3,
+    "min_recovery_rate": 0.7
+  },
+  "phase3": {
+    "min_causal_rules": 5,
+    "min_causes": 5,
+    "min_matched_by": 1,
+    "min_chain_uses": 1,
+    "min_has_pattern": 1
+  },
+  "phase4": {
+    "min_llm_orchestrator": 1,
+    "min_nl_diagnoser": 1,
+    "min_realtime_sensor_bridge": 1
+  },
+  "phase5": {
+    "min_resilience_orchestrator": 1,
+    "min_strategy_evolution": 1,
+    "min_multi_factory_federation": 1
+  }
+}
