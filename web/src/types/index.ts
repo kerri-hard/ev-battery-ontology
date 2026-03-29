@@ -358,6 +358,7 @@ export interface EngineState {
   };
   l3Snapshot?: Record<string, unknown>;
   l3Trends?: Record<string, unknown>[];
+  crossInvestigations?: Array<Record<string, unknown>>;
 }
 
 // ── WS Command ──

@@ -356,9 +356,16 @@ class CausalReasoner:
         self.chain_cache[(step_id, sensor_type)] = chain_key
 
     def replay_calibration(self, conn) -> dict:
-        """FailureChain 성공/실패 이력을 재생해 CausalRule strength를 보정한다."""
+        """FailureChain 성공/실패 이력을 재생해 CausalRule strength를 보정한다.
+
+        High success_rate causes get boosted, low success_rate causes get dampened.
+        Uses a Bayesian-style update: strength = old * (1 - lr) + target * lr
+        where target depends on success_rate and trial count (more trials = more weight).
+        """
         updates = 0
         scanned = 0
+        # Aggregate success/fail across all chains per cause_type
+        cause_stats: dict[str, dict] = {}
         try:
             r = conn.execute(
                 "MATCH (fc:FailureChain) "
@@ -369,11 +376,31 @@ class CausalReasoner:
                 cause = row[0]
                 succ = int(row[1]) if row[1] is not None else 0
                 fail = int(row[2]) if row[2] is not None else 0
-                trials = succ + fail
-                if not cause or trials < 2:
+                if not cause:
                     continue
-                scanned += 1
-                success_rate = succ / max(trials, 1)
+                if cause not in cause_stats:
+                    cause_stats[cause] = {"succ": 0, "fail": 0}
+                cause_stats[cause]["succ"] += succ
+                cause_stats[cause]["fail"] += fail
+        except Exception:
+            pass
+
+        for cause, stats in cause_stats.items():
+            succ = stats["succ"]
+            fail = stats["fail"]
+            trials = succ + fail
+            if trials < 1:
+                continue
+            scanned += 1
+            success_rate = succ / max(trials, 1)
+
+            # Learning rate increases with more trials (more evidence = stronger update)
+            lr = min(0.5, 0.15 + trials * 0.03)
+
+            # Target strength: high success -> boost toward 0.9, low success -> dampen toward 0.3
+            target = 0.3 + success_rate * 0.65  # range [0.3, 0.95]
+
+            try:
                 rr = conn.execute(
                     "MATCH (cr:CausalRule) "
                     "WHERE cr.cause_type=$cause OR cr.effect_type=$cause "
@@ -384,16 +411,15 @@ class CausalReasoner:
                     cr = rr.get_next()
                     rule_id = cr[0]
                     old_strength = float(cr[1]) if cr[1] is not None else 0.5
-                    # EMA 스타일 보정: old 70% + replay success 30%
-                    new_strength = max(0.2, min(0.98, old_strength * 0.7 + success_rate * 0.3))
+                    new_strength = max(0.15, min(0.98, old_strength * (1 - lr) + target * lr))
                     conn.execute(
                         "MATCH (cr:CausalRule) WHERE cr.id=$id "
                         "SET cr.strength=$s, cr.last_confirmed=$ts",
                         {"id": rule_id, "s": round(new_strength, 3), "ts": datetime.now().isoformat()},
                     )
                     updates += 1
-        except Exception:
-            pass
+            except Exception:
+                pass
         return {"scanned_chains": scanned, "updated_rules": updates}
 
     # ── Internal ──

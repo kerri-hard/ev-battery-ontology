@@ -40,6 +40,66 @@ RECOVERY_PLAYBOOK = {
     "no_inspection": [
         {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
     ],
+    # 인과 체인에서 도출되는 원인 유형들
+    "precision_loss": [
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.02, "risk": "MEDIUM"},
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.003, "risk": "LOW"},
+    ],
+    "coating_defect": [
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.004, "risk": "LOW"},
+        {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+    ],
+    "contact_failure": [
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.02, "risk": "MEDIUM"},
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.005, "risk": "LOW"},
+    ],
+    "yield_drop": [
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.003, "risk": "LOW"},
+    ],
+    "temperature_rise": [
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.002, "risk": "LOW"},
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.01, "risk": "LOW"},
+    ],
+    "pressure_drop": [
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.02, "risk": "MEDIUM"},
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.003, "risk": "LOW"},
+    ],
+    "vibration_increase": [
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.015, "risk": "MEDIUM"},
+    ],
+    "welding_defect": [
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.005, "risk": "LOW"},
+        {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+    ],
+    "joint_weakness": [
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.004, "risk": "LOW"},
+        {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+    ],
+    "bearing_wear": [
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.025, "risk": "MEDIUM"},
+    ],
+    "cooling_failure": [
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.02, "risk": "MEDIUM"},
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.002, "risk": "LOW"},
+    ],
+    "current_anomaly": [
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.003, "risk": "LOW"},
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.015, "risk": "MEDIUM"},
+    ],
+    "process_variation": [
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.002, "risk": "LOW"},
+    ],
+    "property_deviation": [
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.002, "risk": "LOW"},
+        {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+    ],
+    "equipment_wear": [
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.02, "risk": "MEDIUM"},
+    ],
+    "material_lot_change": [
+        {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+        {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.002, "risk": "LOW"},
+    ],
     "unknown": [
         {"action": "ESCALATE", "param": None, "adjustment": None, "risk": "CRITICAL"},
     ],
@@ -928,6 +988,67 @@ class AutoRecoveryAgent:
         self.success_history[key]["attempts"] += 1
         if success:
             self.success_history[key]["successes"] += 1
+
+    def mutate_playbook(self) -> dict:
+        """Self-evolution: mutate playbook entries with < 50% success rate.
+
+        For poorly performing (action_type, cause_type) pairs, try the NEXT
+        action in the playbook list. Track which mutations improved outcomes.
+
+        Returns:
+            Summary of mutations applied.
+        """
+        mutations = []
+        for (action_type, cause_type), hist in list(self.success_history.items()):
+            attempts = hist["attempts"]
+            successes = hist["successes"]
+            if attempts < 3:
+                continue  # not enough data
+            success_rate = successes / attempts
+            if success_rate >= 0.50:
+                continue  # performing OK
+
+            # Find current position in playbook for this cause_type
+            playbook_entries = self.recovery_playbook.get(cause_type, [])
+            if len(playbook_entries) < 2:
+                continue  # no alternative to try
+
+            current_idx = None
+            for i, entry in enumerate(playbook_entries):
+                if entry["action"] == action_type:
+                    current_idx = i
+                    break
+
+            if current_idx is None:
+                continue
+
+            # Try the next action in the list (wrap around)
+            next_idx = (current_idx + 1) % len(playbook_entries)
+            next_entry = playbook_entries[next_idx]
+            old_action = action_type
+            new_action = next_entry["action"]
+
+            if old_action == new_action:
+                continue
+
+            # Promote the next entry to the front by swapping
+            playbook_entries[current_idx], playbook_entries[next_idx] = (
+                playbook_entries[next_idx],
+                playbook_entries[current_idx],
+            )
+
+            mutations.append({
+                "cause_type": cause_type,
+                "old_action": old_action,
+                "new_action": new_action,
+                "old_success_rate": round(success_rate, 3),
+                "attempts": attempts,
+            })
+
+        return {
+            "mutations_applied": len(mutations),
+            "details": mutations[:10],
+        }
 
     # ── Internal helpers ──
 

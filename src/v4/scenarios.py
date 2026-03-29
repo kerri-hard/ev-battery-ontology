@@ -31,6 +31,34 @@ if TYPE_CHECKING:
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Physical Distance Model for Cascading Timing
+# ═══════════════════════════════════════════════════════════════
+
+def _area_from_step(step_id: str) -> int:
+    """PS-1xx -> 1, PS-2xx -> 2, etc. Returns the 100-series area number."""
+    try:
+        return int(step_id.split("-")[1][0])
+    except (IndexError, ValueError):
+        return 0
+
+
+def physical_delay(src_step: str, tgt_step: str) -> int:
+    """Compute delay_ticks based on physical distance between process areas.
+
+    Same area = 1 tick, adjacent area = 2 ticks, far (2+ areas apart) = 3 ticks.
+    """
+    src_area = _area_from_step(src_step)
+    tgt_area = _area_from_step(tgt_step)
+    distance = abs(src_area - tgt_area)
+    if distance == 0:
+        return 1
+    elif distance == 1:
+        return 2
+    else:
+        return 3
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Scenario Library
 # ═══════════════════════════════════════════════════════════════
 
@@ -298,8 +326,18 @@ class ScenarioEngine:
         if scenario is None:
             return None  # 알 수 없는 시나리오
 
+        scenario_copy = copy.deepcopy(scenario)
+
+        # cascading 시나리오: delay_ticks를 물리적 거리 기반으로 재계��
+        if scenario_copy["category"] == "cascading" and len(scenario_copy["affected_steps"]) > 1:
+            origin_step = scenario_copy["affected_steps"][0]["step_id"]
+            for step_effect in scenario_copy["affected_steps"]:
+                if step_effect["delay_ticks"] == 0:
+                    continue  # 원점은 그대로
+                step_effect["delay_ticks"] = physical_delay(origin_step, step_effect["step_id"])
+
         active = _ActiveScenario(
-            scenario=copy.deepcopy(scenario),
+            scenario=scenario_copy,
             activated_at=datetime.now(timezone.utc).isoformat(),
         )
 
@@ -511,3 +549,57 @@ class ScenarioEngine:
             완료된 시나리오 기록. 최근 것이 마지막.
         """
         return list(self._history)
+
+    def adapt_difficulty(self, metrics: dict) -> dict[str, Any]:
+        """Adapt scenario difficulty based on current recovery performance.
+
+        If recovery rate > 80%, increase severity to challenge the system.
+        If recovery rate < 40%, decrease severity to let it stabilize.
+
+        Parameters
+        ----------
+        metrics : dict
+            Should contain 'recovery_rate' (0..1) or 'auto_recovered' and 'total_incidents'.
+
+        Returns
+        -------
+        dict
+            Summary of difficulty adjustments made.
+        """
+        recovery_rate = metrics.get("recovery_rate")
+        if recovery_rate is None:
+            total = metrics.get("total_incidents", 0)
+            recovered = metrics.get("auto_recovered", 0)
+            recovery_rate = recovered / max(total, 1)
+
+        adjustments = []
+
+        for scenario in SCENARIO_LIBRARY:
+            for step_effect in scenario["affected_steps"]:
+                old_severity = step_effect["severity"]
+                if recovery_rate > 0.80:
+                    # Increase difficulty: bump severity up (max 3)
+                    step_effect["severity"] = min(3, old_severity + 1)
+                elif recovery_rate < 0.40:
+                    # Decrease difficulty: reduce severity (min 1)
+                    step_effect["severity"] = max(1, old_severity - 1)
+                else:
+                    continue
+
+                if step_effect["severity"] != old_severity:
+                    adjustments.append({
+                        "scenario_id": scenario["id"],
+                        "step_id": step_effect["step_id"],
+                        "old_severity": old_severity,
+                        "new_severity": step_effect["severity"],
+                    })
+
+        # Rebuild library index
+        self._library_index = {s["id"]: s for s in SCENARIO_LIBRARY}
+
+        return {
+            "recovery_rate": round(recovery_rate, 3),
+            "direction": "harder" if recovery_rate > 0.80 else ("easier" if recovery_rate < 0.40 else "unchanged"),
+            "adjustments": len(adjustments),
+            "details": adjustments[:10],
+        }

@@ -65,7 +65,11 @@ class PredictiveAgent:
         return rows[: max(1, limit)]
 
     def rank_rul_risks_v1(self, conn, limit: int = 5):
-        """Feature-based RUL v1 (incidents + alarms + sensor variance)."""
+        """Feature-based RUL v1 (incidents + alarms + sensor variance + incident recency).
+
+        Steps with more past incidents get lower RUL scores.  Recent incidents
+        (resolved=False) weigh more heavily than old resolved ones.
+        """
         base = self.rank_rul_risks(conn, limit=max(10, limit * 3))
         out = []
         for row in base:
@@ -77,21 +81,36 @@ class PredictiveAgent:
             incident_count = int(row.get("incident_count", 0) or 0)
             base_risk = float(row.get("risk_score", 0.1) or 0.1)
 
+            # New: count unresolved incidents (higher weight)
+            unresolved_count = self._count_unresolved_incidents(conn, step_id)
+
             alarm_component = min(0.35, alarm_count * 0.04)
             variance_component = min(0.3, variance * 0.12)
             incident_component = min(0.25, incident_count * 0.05)
-            risk_score = max(0.05, min(0.99, base_risk * 0.45 + alarm_component + variance_component + incident_component))
+            # Unresolved incidents are a strong degradation signal
+            unresolved_component = min(0.30, unresolved_count * 0.10)
+
+            risk_score = max(0.05, min(0.99,
+                base_risk * 0.35
+                + alarm_component
+                + variance_component
+                + incident_component
+                + unresolved_component
+            ))
             mtbf = float(row.get("mtbf_hours", 2000.0) or 2000.0)
-            rul_hours = max(12.0, mtbf * (1.0 - risk_score) * 0.55)
+            # Heavier penalty: more incidents = shorter RUL
+            incident_penalty = max(0.5, 1.0 - incident_count * 0.04)
+            rul_hours = max(12.0, mtbf * (1.0 - risk_score) * 0.55 * incident_penalty)
             out.append(
                 {
                     **row,
-                    "model_version": "rul_feature_v1",
+                    "model_version": "rul_feature_v1.1",
                     "features": {
                         "base_risk": round(base_risk, 3),
                         "alarm_count_recent": alarm_count,
                         "sensor_variance_recent": round(variance, 4),
                         "incident_count": incident_count,
+                        "unresolved_incidents": unresolved_count,
                     },
                     "risk_score": round(risk_score, 3),
                     "rul_hours": round(rul_hours, 1),
@@ -100,6 +119,21 @@ class PredictiveAgent:
             )
         out.sort(key=lambda x: (-x["risk_score"], x["rul_hours"]))
         return out[: max(1, limit)]
+
+    @staticmethod
+    def _count_unresolved_incidents(conn, step_id: str) -> int:
+        """Count incidents for this step that were not auto-recovered."""
+        try:
+            r = conn.execute(
+                "MATCH (inc:Incident) WHERE inc.step_id=$sid AND inc.auto_recovered=false "
+                "RETURN count(inc)",
+                {"sid": step_id},
+            )
+            if r.has_next():
+                return int(r.get_next()[0] or 0)
+        except Exception:
+            pass
+        return 0
 
     @staticmethod
     def _count_recent_alarms(conn, step_id: str, n: int = 40) -> int:

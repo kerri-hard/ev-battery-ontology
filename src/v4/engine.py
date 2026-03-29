@@ -56,9 +56,9 @@ class SelfHealingEngine(HarnessEngine):
         self.hitl_pending = []
         self.hitl_audit = []
         self.hitl_policy = {
-            "min_confidence": 0.62,
-            "high_risk_threshold": 0.6,
-            "medium_requires_history": True,
+            "min_confidence": 0.40,
+            "high_risk_threshold": 0.75,
+            "medium_requires_history": False,
         }
 
     # ── INIT ──────────────────────────────────────────────
@@ -105,9 +105,9 @@ class SelfHealingEngine(HarnessEngine):
         self.hitl_pending = []
         self.hitl_audit = []
         self.hitl_policy = {
-            "min_confidence": 0.62,
-            "high_risk_threshold": 0.6,
-            "medium_requires_history": True,
+            "min_confidence": 0.40,
+            "high_risk_threshold": 0.75,
+            "medium_requires_history": False,
         }
         self._load_hitl_runtime_state()
         graph_policy = load_active_policy(self.conn)
@@ -200,7 +200,7 @@ class SelfHealingEngine(HarnessEngine):
 
             # ①-b CORRELATE — 센서 간 상관분석
             self.correlation_analyzer.ingest(readings)
-            if it > 0 and it % 3 == 0:  # 3 이터레이션마다 상관분석 실행
+            if it > 0 and it % 2 == 0:  # 2 이터레이션마다 상관분석 실행
                 correlations = self.correlation_analyzer.analyze_all()
                 if correlations:
                     stored = self.cross_investigator.store_discovered_correlations(
@@ -759,41 +759,65 @@ class SelfHealingEngine(HarnessEngine):
                 cal = self.causal_reasoner.replay_calibration(self.conn)
                 await self._emit("causal_calibrated", {"iteration": it + 1, **cal})
 
-            # LLM 분석 — 가장 최근 인시던트에 대해 실행
-            if self.healing_history and self.llm_analyst.available:
-                latest_inc = self.healing_history[-1]
+            # 5회마다 에이전트 플레이북 자기진화
+            if (it + 1) % 5 == 0:
+                mutation_result = self.auto_recovery.mutate_playbook()
+                if mutation_result.get("mutations_applied", 0) > 0:
+                    await self._emit("playbook_mutated", {"iteration": it + 1, **mutation_result})
+
+            # 5회마다 시나리오 난이도 적응
+            if (it + 1) % 5 == 0:
+                total_inc = len(self.healing_history)
+                auto_rec = sum(1 for h in self.healing_history if h.get("auto_recovered"))
+                adapt_result = self.scenario_engine.adapt_difficulty({
+                    "total_incidents": total_inc,
+                    "auto_recovered": auto_rec,
+                })
+                await self._emit("scenario_difficulty_adapted", {"iteration": it + 1, **adapt_result})
+
+            # LLM 분석 — 이번 이터레이션의 인시던트 각각에 대해 (최대 3건 배치)
+            llm_batch_count = 0
+            llm_max_batch = 3
+            this_iteration_incidents = [
+                inc for inc in self.healing_history
+                if inc.get("iteration") == it + 1
+            ]
+            for batch_inc in this_iteration_incidents[:llm_max_batch]:
+                if not self.llm_analyst.available:
+                    break
                 try:
                     # 인시던트 데이터 구성
                     step_name = ""
                     try:
-                        r = self.conn.execute("MATCH (ps:ProcessStep) WHERE ps.id=$id RETURN ps.name", {"id": latest_inc.get("step_id","")})
+                        r = self.conn.execute("MATCH (ps:ProcessStep) WHERE ps.id=$id RETURN ps.name", {"id": batch_inc.get("step_id","")})
                         if r.has_next():
                             step_name = r.get_next()[0]
                     except Exception:
                         pass
 
                     inc_data = {
-                        "step_id": latest_inc.get("step_id", ""),
+                        "incident_id": batch_inc.get("id", ""),
+                        "step_id": batch_inc.get("step_id", ""),
                         "step_name": step_name,
                         "anomaly": {
-                            "sensor_type": latest_inc.get("anomaly_type", ""),
-                            "severity": latest_inc.get("severity", "MEDIUM"),
-                            "anomaly_type": latest_inc.get("anomaly_type", ""),
+                            "sensor_type": batch_inc.get("anomaly_type", ""),
+                            "severity": batch_inc.get("severity", "MEDIUM"),
+                            "anomaly_type": batch_inc.get("anomaly_type", ""),
                         },
                         "diagnosis": {
-                            "top_cause": latest_inc.get("top_cause", ""),
-                            "confidence": latest_inc.get("confidence", 0),
-                            "causal_chain": latest_inc.get("causal_chain", ""),
-                            "history_matched": latest_inc.get("history_matched", False),
+                            "top_cause": batch_inc.get("top_cause", ""),
+                            "confidence": batch_inc.get("confidence", 0),
+                            "causal_chain": batch_inc.get("causal_chain", ""),
+                            "history_matched": batch_inc.get("history_matched", False),
                         },
                         "cross_investigation": {
-                            "correlated_steps": self.correlation_analyzer.get_correlations_for_step(latest_inc.get("step_id","")),
+                            "correlated_steps": self.correlation_analyzer.get_correlations_for_step(batch_inc.get("step_id","")),
                         },
                         "recovery": {
-                            "action_type": latest_inc.get("action_type", ""),
-                            "success": latest_inc.get("auto_recovered", False),
-                            "pre_yield": latest_inc.get("pre_yield"),
-                            "post_yield": latest_inc.get("post_yield"),
+                            "action_type": batch_inc.get("action_type", ""),
+                            "success": batch_inc.get("auto_recovered", False),
+                            "pre_yield": batch_inc.get("pre_yield"),
+                            "post_yield": batch_inc.get("post_yield"),
                         },
                     }
                     # 활성 시나리오가 있으면 포함
@@ -803,6 +827,7 @@ class SelfHealingEngine(HarnessEngine):
 
                     analysis = self.llm_analyst.analyze_incident_sync(inc_data)
                     await self._emit("incident_analysis", analysis)
+                    llm_batch_count += 1
                 except Exception:
                     pass
 

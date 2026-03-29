@@ -256,7 +256,7 @@ class CrossProcessInvestigator:
         """발견된 상관관계를 온톨로지에 CORRELATES_WITH로 저장한다."""
         stored = 0
         for c in correlations:
-            if abs(c["coefficient"]) < 0.5:
+            if abs(c["coefficient"]) < 0.4:
                 continue
             src = c["source_step"]
             tgt = c["target_step"]

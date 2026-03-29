@@ -334,6 +334,7 @@ function reducer(state: EngineState, action: Action): EngineState {
 
         case 'diagnose_done': {
           const diags = (data.diagnoses as Record<string, unknown>[]) || [];
+          const crossInv = (data.cross_investigations as Record<string, unknown>[]) || [];
           const msgs = diags.map((d) => {
             const base = `${d.step_id}: ${d.top_cause} (${((d.confidence as number) * 100).toFixed(0)}%)`;
             const chain = d.causal_chain as string | undefined;
@@ -345,6 +346,7 @@ function reducer(state: EngineState, action: Action): EngineState {
           });
           return { ...state,
             healingPhase: 'diagnose' as HealingPhase,
+            crossInvestigations: crossInv.length > 0 ? crossInv : state.crossInvestigations,
             eventLog: addLog(state.eventLog, null, `원인 진단: ${msgs.join(', ')}`),
           };
         }
