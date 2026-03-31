@@ -55,7 +55,7 @@ class CorrelationAnalyzer:
     - 공정 간 상관이 높으면 온톨로지에 CORRELATES_WITH 관계 추가
     """
 
-    def __init__(self, min_samples=10, correlation_threshold=0.6):
+    def __init__(self, min_samples=5, correlation_threshold=0.6):
         # step_id:sensor_type → list of (timestamp, value)
         self.series = defaultdict(list)
         self.max_history = 100

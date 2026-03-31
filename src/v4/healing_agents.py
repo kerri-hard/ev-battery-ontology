@@ -718,10 +718,14 @@ class AutoRecoveryAgent:
                     "playbook_id": entry.get("id"),
                 })
 
-        # confidence * (1 - risk_numeric) 순으로 정렬 (높은 순)
+        # 리스크 레벨 순 정렬: LOW → MEDIUM → HIGH → CRITICAL
+        # 같은 리스크 레벨 내에서는 confidence 높은 순
+        _RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
         actions.sort(
-            key=lambda a: a["confidence"] * (1 - RISK_NUMERIC.get(a["risk_level"], 0.5)),
-            reverse=True,
+            key=lambda a: (
+                _RISK_ORDER.get(a["risk_level"], 2),
+                -a["confidence"],
+            ),
         )
         return actions
 
@@ -1160,3 +1164,64 @@ class AutoRecoveryAgent:
         except Exception:
             # RecoveryAction 테이블이 아직 없을 수 있음 — 무시
             pass
+
+
+class ResilienceOrchestrator:
+    """장비 고장 시 대체 경로를 활성화한다.
+
+    온톨로지의 PARALLEL_WITH 관계를 활용하여,
+    한 경로가 실패하면 병렬 경로로 자동 전환한다.
+    """
+
+    def find_alternate_path(self, conn, failed_step_id):
+        """실패한 공정의 대체 경로를 찾는다."""
+        alternates = []
+        # PARALLEL_WITH 관계로 연결된 공정
+        try:
+            r = conn.execute(
+                "MATCH (a:ProcessStep)-[:PARALLEL_WITH]-(b:ProcessStep) "
+                "WHERE a.id = $id RETURN b.id, b.name, b.yield_rate, b.oee",
+                {"id": failed_step_id})
+            while r.has_next():
+                row = r.get_next()
+                alternates.append({
+                    "step_id": row[0], "name": row[1],
+                    "yield_rate": float(row[2]) if row[2] else 0,
+                    "oee": float(row[3]) if row[3] else 0,
+                    "type": "parallel",
+                })
+        except Exception:
+            pass
+
+        # 같은 영역의 다른 공정 (유사 장비)
+        try:
+            r = conn.execute(
+                "MATCH (a:ProcessStep) WHERE a.id = $id "
+                "MATCH (b:ProcessStep) WHERE b.area_id = a.area_id AND b.id <> a.id AND b.yield_rate > 0.99 "
+                "RETURN b.id, b.name, b.yield_rate, b.oee LIMIT 2",
+                {"id": failed_step_id})
+            while r.has_next():
+                row = r.get_next()
+                alternates.append({
+                    "step_id": row[0], "name": row[1],
+                    "yield_rate": float(row[2]) if row[2] else 0,
+                    "oee": float(row[3]) if row[3] else 0,
+                    "type": "same_area",
+                })
+        except Exception:
+            pass
+
+        alternates.sort(key=lambda x: -x["yield_rate"])
+        return alternates
+
+    def activate_alternate(self, conn, failed_step_id, alternate):
+        """대체 경로를 활성화한다 (온톨로지에 우회 관계 추가)."""
+        try:
+            conn.execute(
+                "MATCH (a:ProcessStep),(b:ProcessStep) WHERE a.id=$s AND b.id=$t "
+                "AND NOT (a)-[:FEEDS_INTO]->(b) "
+                "CREATE (a)-[:FEEDS_INTO]->(b)",
+                {"s": failed_step_id, "t": alternate["step_id"]})
+            return {"success": True, "alternate": alternate["step_id"], "type": alternate["type"]}
+        except Exception:
+            return {"success": False}
