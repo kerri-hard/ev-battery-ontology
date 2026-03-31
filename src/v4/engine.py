@@ -19,6 +19,7 @@ from v4.healing_agents import (
     AnomalyDetector,
     RootCauseAnalyzer,
     AutoRecoveryAgent,
+    ResilienceOrchestrator,
     RISK_NUMERIC,
     requires_hitl,
 )
@@ -28,6 +29,11 @@ from v4.scenarios import ScenarioEngine
 from v4.llm_analyst import LLMAnalyst
 from v4.llm_agents import PredictiveAgent, NaturalLanguageDiagnoser
 from v4.decision_layer import extend_schema_l4, seed_l4_policy, load_active_policy, update_active_policy
+from v4.advanced_detection import AdvancedAnomalyDetector
+from v4.weibull_rul import WeibullRULEstimator
+from v4.traceability import extend_schema_traceability, TraceabilityManager
+from v4.protocol_bridge import SimulatedBridge
+from v4.event_bus import EventBus
 
 
 class SelfHealingEngine(HarnessEngine):
@@ -39,11 +45,17 @@ class SelfHealingEngine(HarnessEngine):
         # Healing-specific agents and state
         self.sensor_sim = None
         self.anomaly_detector = None
+        self.advanced_detector = None    # Matrix Profile + IsolationForest
         self.root_cause_analyzer = None
         self.auto_recovery = None
+        self.resilience = None
         self.causal_reasoner = None
         self.predictive_agent = None
+        self.weibull_rul = None          # Weibull 생존분석 RUL
         self.nl_diagnoser = None
+        self.traceability = None         # 배터리 추적성 관리
+        self.sensor_bridge = None        # 프로토콜 브릿지
+        self.event_bus = None            # 이벤트 버스
         self.healing_counters = {"reading": 0, "alarm": 0, "incident": 0, "recovery": 0}
         self.healing_history = []       # list of incident records
         self.healing_iteration = 0
@@ -52,6 +64,7 @@ class SelfHealingEngine(HarnessEngine):
         self.l3_trend_history = []
         self.latest_l3_snapshot = {}
         self.latest_predictive = []
+        self.latest_weibull_rul = []     # Weibull RUL 결과
         self.orchestrator_traces = []
         self.hitl_pending = []
         self.hitl_audit = []
@@ -80,18 +93,28 @@ class SelfHealingEngine(HarnessEngine):
         # 상관분석 스키마 확장
         extend_schema_correlation(self.conn)
 
+        # L5 추적성 스키마 확장 (EU Battery Regulation 대응)
+        extend_schema_traceability(self.conn)
+
         # 자율 복구 에이전트 초기화
         self.sensor_sim = SensorSimulator(self.conn)
         self.anomaly_detector = AnomalyDetector()
+        self.advanced_detector = AdvancedAnomalyDetector()
         self.root_cause_analyzer = RootCauseAnalyzer()
         self.auto_recovery = AutoRecoveryAgent()
+        self.resilience = ResilienceOrchestrator()
         self.causal_reasoner = CausalReasoner()
         self.correlation_analyzer = CorrelationAnalyzer()
         self.cross_investigator = CrossProcessInvestigator()
         self.scenario_engine = ScenarioEngine(self.sensor_sim)
         self.llm_analyst = LLMAnalyst()
         self.predictive_agent = PredictiveAgent()
+        self.weibull_rul = WeibullRULEstimator()
         self.nl_diagnoser = NaturalLanguageDiagnoser()
+        self.traceability = TraceabilityManager()
+        self.sensor_bridge = SimulatedBridge(self.sensor_sim)
+        self.sensor_bridge.connect()
+        self.event_bus = EventBus()
 
         # 카운터/이력 리셋
         self.healing_counters = {"reading": 0, "alarm": 0, "incident": 0, "recovery": 0}
@@ -101,6 +124,7 @@ class SelfHealingEngine(HarnessEngine):
         self.l3_trend_history = []
         self.latest_l3_snapshot = {}
         self.latest_predictive = []
+        self.latest_weibull_rul = []
         self.orchestrator_traces = []
         self.hitl_pending = []
         self.hitl_audit = []
@@ -200,7 +224,7 @@ class SelfHealingEngine(HarnessEngine):
 
             # ①-b CORRELATE — 센서 간 상관분석
             self.correlation_analyzer.ingest(readings)
-            if it > 0 and it % 2 == 0:  # 2 이터레이션마다 상관분석 실행
+            if it >= 1:  # 매 이터레이션마다 상관분석 실행 (조기 활성화)
                 correlations = self.correlation_analyzer.analyze_all()
                 if correlations:
                     stored = self.cross_investigator.store_discovered_correlations(
@@ -232,6 +256,15 @@ class SelfHealingEngine(HarnessEngine):
 
             self.anomaly_detector.update(readings)
             anomalies = self.anomaly_detector.detect(readings)
+
+            # Advanced Detection (CUSUM + Matrix Profile + Isolation Forest)
+            self.advanced_detector.update(readings)
+            advanced_anomalies = self.advanced_detector.detect(readings)
+            # 기존 SPC에서 놓친 이상만 추가 (step_id 중복 제거)
+            spc_steps = {a.get("step_id") for a in anomalies}
+            for adv in advanced_anomalies:
+                if adv.get("step_id") not in spc_steps:
+                    anomalies.append(adv)
 
             # 알람 체크
             alarms = self.sensor_sim.check_alarms(readings)
@@ -369,21 +402,76 @@ class SelfHealingEngine(HarnessEngine):
                         })
                         continue
 
-                    # 최적 액션 선택: confidence 높고 risk 낮은 것
-                    best_action = max(
-                        actions,
-                        key=lambda a: a.get("confidence", 0)
-                        * (1 - RISK_NUMERIC.get(str(a.get("risk_level", "MEDIUM")), 0.5)),
-                    )
+                    # Safety-grade-aware confidence override
+                    step_safety = 'C'
+                    try:
+                        r = self.conn.execute(
+                            "MATCH (ps:ProcessStep) WHERE ps.id=$id RETURN ps.safety_level",
+                            {"id": step_id},
+                        )
+                        if r.has_next():
+                            step_safety = r.get_next()[0] or 'C'
+                    except Exception:
+                        pass
 
-                    hitl_needed, hitl_reason = requires_hitl(
-                        best_action,
-                        diagnosis,
-                        min_confidence=float(self.hitl_policy.get("min_confidence", 0.62)),
-                        high_risk_threshold=float(self.hitl_policy.get("high_risk_threshold", 0.6)),
-                        medium_requires_history=bool(self.hitl_policy.get("medium_requires_history", True)),
-                    )
-                    if hitl_needed:
+                    safety_confidence = {
+                        'A': max(0.65, float(self.hitl_policy.get("min_confidence", 0.40))),
+                        'B': float(self.hitl_policy.get("min_confidence", 0.40)),
+                        'C': min(0.35, float(self.hitl_policy.get("min_confidence", 0.40))),
+                    }.get(step_safety, float(self.hitl_policy.get("min_confidence", 0.40)))
+
+                    # HITL 판단 (첫 번째 액션 기준으로 전체 escalation 여부 결정)
+                    hitl_needed = False
+                    hitl_reason = ""
+                    if actions:
+                        hitl_needed, hitl_reason = requires_hitl(
+                            actions[0],
+                            diagnosis,
+                            min_confidence=safety_confidence,
+                            high_risk_threshold=float(self.hitl_policy.get("high_risk_threshold", 0.6)),
+                            medium_requires_history=bool(self.hitl_policy.get("medium_requires_history", True)),
+                        )
+
+                    # Multi-step recovery: LOW → MEDIUM → HIGH 순으로 시도
+                    recovery_success = False
+                    executed_action = None
+                    result = {}
+                    recover_started = time.time()
+                    for action in actions[:3]:  # try up to 3 actions in escalating risk order
+                        if hitl_needed and action.get("risk_level") in ("HIGH", "CRITICAL"):
+                            continue  # skip high risk if HITL flagged
+                        result = self.auto_recovery.execute_recovery(
+                            self.conn, action, self.healing_counters,
+                        )
+                        if result.get("success"):
+                            recovery_success = True
+                            executed_action = action
+                            break
+                    recovery_time_sec = max(0.0, time.time() - recover_started)
+
+                    # 모든 복구 실패 시 대체 경로 탐색
+                    if not recovery_success:
+                        alts = self.resilience.find_alternate_path(self.conn, step_id)
+                        if alts:
+                            alt_result = self.resilience.activate_alternate(self.conn, step_id, alts[0])
+                            if alt_result.get("success"):
+                                recovery_success = True
+                                executed_action = {
+                                    "action_type": "ALTERNATE_PATH",
+                                    "target_step": step_id,
+                                    "parameter": None,
+                                    "old_value": None,
+                                    "new_value": alt_result.get("alternate"),
+                                    "confidence": 0.5,
+                                    "risk_level": "MEDIUM",
+                                    "cause_type": "alternate_path",
+                                    "cause_name": f"alternate via {alt_result.get('type', 'unknown')}",
+                                    "playbook_source": "resilience_orchestrator",
+                                    "playbook_id": None,
+                                }
+
+                    if not recovery_success and hitl_needed:
+                        best_action = actions[0] if actions else {"risk_level": "CRITICAL", "confidence": 0.0}
                         pending_id = f"HITL-{it + 1:04d}-{len(self.hitl_pending) + 1:03d}"
                         pending = {
                             "id": pending_id,
@@ -422,23 +510,19 @@ class SelfHealingEngine(HarnessEngine):
                         })
                         continue
 
-                    recover_started = time.time()
-                    result = self.auto_recovery.execute_recovery(
-                        self.conn, best_action, self.healing_counters,
-                    )
-                    recovery_time_sec = max(0.0, time.time() - recover_started)
+                    final_action = executed_action or (actions[0] if actions else {})
                     recovery_results.append({
                         "step_id": anomaly.get("step_id"),
-                        "action_type": best_action.get("action_type", "unknown"),
-                        "target": best_action.get("target_step"),
-                        "success": result.get("success", False),
-                        "recovery_id": result.get("recovery_id"),
+                        "action_type": final_action.get("action_type", "unknown"),
+                        "target": final_action.get("target_step"),
+                        "success": recovery_success,
+                        "recovery_id": result.get("recovery_id") if recovery_success else None,
                         "pre_yield": pre_yield_baseline,
-                        "detail": result.get("detail", ""),
-                        "risk_level": best_action.get("risk_level"),
-                        "confidence": best_action.get("confidence"),
-                        "playbook_id": best_action.get("playbook_id"),
-                        "playbook_source": best_action.get("playbook_source"),
+                        "detail": result.get("detail", "") if recovery_success else "모든 복구 액션 실패",
+                        "risk_level": final_action.get("risk_level"),
+                        "confidence": final_action.get("confidence"),
+                        "playbook_id": final_action.get("playbook_id"),
+                        "playbook_source": final_action.get("playbook_source"),
                         "hitl_required": False,
                         "recovery_time_sec": round(recovery_time_sec, 4),
                     })
@@ -512,11 +596,19 @@ class SelfHealingEngine(HarnessEngine):
             except Exception:
                 predictive = self.latest_predictive
 
+            # Weibull 생존분석 RUL (업계 표준: Uptake, ABB Ability)
+            try:
+                weibull_results = self.weibull_rul.estimate(self.conn, limit=5)
+                self.latest_weibull_rul = weibull_results
+            except Exception:
+                weibull_results = self.latest_weibull_rul
+
             await self._emit("verify_done", {
                 "iteration": it + 1,
                 "verifications": verifications,
                 "metrics": updated_metrics,
                 "predictive": predictive,
+                "weibull_rul": weibull_results,
             })
             await asyncio.sleep(delay)
 
@@ -775,6 +867,31 @@ class SelfHealingEngine(HarnessEngine):
                 })
                 await self._emit("scenario_difficulty_adapted", {"iteration": it + 1, **adapt_result})
 
+            # Traceability — 배치별 품질 추적 (Tesla/Samsung SDI 방식)
+            try:
+                for rr in recovery_results:
+                    if rr.get("step_id"):
+                        batch = self.traceability.create_batch(
+                            self.conn, rr["step_id"], batch_size=96,
+                            energy_kwh=round(0.5 + 0.3 * len(recovery_results), 2),
+                        )
+                        yield_val = rr.get("pre_yield", 0.95)
+                        defects = 1 if not rr.get("success") else 0
+                        self.traceability.complete_batch(
+                            self.conn, batch["batch_id"],
+                            yield_rate=yield_val, defect_count=defects,
+                        )
+            except Exception:
+                pass
+
+            # Event Bus — 복구 결과 이벤트 발행
+            try:
+                for rr in recovery_results:
+                    evt_type = "recovery_success" if rr.get("success") else "recovery_failed"
+                    self.event_bus.publish_sync(evt_type, rr, source="healing_loop")
+            except Exception:
+                pass
+
             # LLM 분석 — 이번 이터레이션의 인시던트 각각에 대해 (최대 3건 배치)
             llm_batch_count = 0
             llm_max_batch = 3
@@ -873,17 +990,23 @@ class SelfHealingEngine(HarnessEngine):
 
     async def run_full_cycle(self):
         """v3 온톨로지 개선 + v4 자율 복구를 순차 실행한다."""
-        # Phase 1: 온톨로지 개선 (v3)
+        # Phase 1: 온톨로지 개선 (v3) — 5 iterations for faster cycles
+        original_max = self.max_iterations
+        self.max_iterations = 5
         await self._emit("phase_ontology", {
-            "message": "Phase 1: 온톨로지 개선 루프 시작...",
+            "message": "Phase 1: 온톨로지 개선 루프 시작 (5 iterations)...",
         })
         await self.run_loop()  # v3 loop
 
-        # Phase 2: 자율 복구 시뮬레이션 (v4)
+        # Phase 2: 자율 복구 시뮬레이션 (v4) — restore to 10 for healing
+        self.max_iterations = 10
         await self._emit("phase_healing", {
-            "message": "Phase 2: 자율 복구 시뮬레이션 시작...",
+            "message": "Phase 2: 자율 복구 시뮬레이션 시작 (10 iterations)...",
         })
         await self.run_healing_loop()
+
+        # Restore original max_iterations
+        self.max_iterations = original_max
 
     async def resolve_hitl(
         self,
@@ -998,7 +1121,15 @@ class SelfHealingEngine(HarnessEngine):
             "llm_orchestrator": bool(self.nl_diagnoser and self.nl_diagnoser.get_status().get("llm_enabled")),
             "model": self.nl_diagnoser.get_status().get("model") if self.nl_diagnoser else "none",
             "latest_predictive": self.latest_predictive[:5],
+            "weibull_rul": self.latest_weibull_rul[:5],
             "orchestrator_traces": self.orchestrator_traces[-20:],
+        }
+        # 업계 사례 기반 확장 모듈 상태
+        state["industry_modules"] = {
+            "advanced_detection": self.advanced_detector.get_status() if self.advanced_detector else {},
+            "traceability": self.traceability.get_batch_stats(self.conn) if self.traceability else {},
+            "sensor_bridge": self.sensor_bridge.get_status() if self.sensor_bridge else {},
+            "event_bus": self.event_bus.get_stats() if self.event_bus else {},
         }
         state["l3_trends"] = self.l3_trend_history[-30:]
         state["l3_snapshot"] = dict(self.latest_l3_snapshot) if self.latest_l3_snapshot else {}

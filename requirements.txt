@@ -2,3 +2,9 @@ kuzu>=0.4.0
 fastapi>=0.100.0
 uvicorn>=0.20.0
 websockets>=11.0
+
+# Industry-grade extensions (optional — graceful fallback if missing)
+scipy>=1.11.0            # Weibull RUL 생존분석 (MLE 파라미터 추정)
+# stumpy>=1.12.0         # Matrix Profile 시계열 이상탐지
+# scikit-learn>=1.3.0    # Isolation Forest 다변량 이상탐지
+# paho-mqtt>=2.0.0       # MQTT 브로커 연동

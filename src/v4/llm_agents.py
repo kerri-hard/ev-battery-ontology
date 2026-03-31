@@ -14,9 +14,20 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
+from v4.weibull_rul import WeibullRULEstimator
+
 
 class PredictiveAgent:
-    """Estimate equipment/step risk and rough RUL for maintenance planning."""
+    """Estimate equipment/step risk and rough RUL for maintenance planning.
+
+    업계 참조:
+      - Uptake/Samsara: Weibull 생존분석 기반 fleet-level RUL
+      - ABB Ability: Bayesian Weibull update
+      - NASA C-MAPSS: Transformer 기반 RUL (향후 Phase 3)
+    """
+
+    def __init__(self):
+        self._weibull = WeibullRULEstimator()
 
     def rank_rul_risks(self, conn, limit: int = 5):
         rows = []
@@ -77,7 +88,10 @@ class PredictiveAgent:
             if not step_id:
                 continue
             alarm_count = self._count_recent_alarms(conn, step_id, n=40)
-            variance = self._estimate_sensor_variance(conn, step_id, n=40)
+            # 온톨로지 경로 기반 분산을 우선 사용, 0이면 기존 방식 폴백
+            variance = self._compute_sensor_variance(conn, step_id)
+            if variance == 0.0:
+                variance = self._estimate_sensor_variance(conn, step_id, n=40)
             incident_count = int(row.get("incident_count", 0) or 0)
             base_risk = float(row.get("risk_score", 0.1) or 0.1)
 
@@ -168,6 +182,39 @@ class PredictiveAgent:
         mean = sum(vals) / len(vals)
         var = sum((x - mean) ** 2 for x in vals) / len(vals)
         return var
+
+    @staticmethod
+    def _compute_sensor_variance(conn, step_id: str) -> float:
+        """최근 센서 읽기값의 분산을 계산한다.
+
+        온톨로지의 USES_EQUIPMENT → HAS_READING 경로를 사용하여
+        해당 공정에 연결된 장비의 최근 센서 데이터 분산을 구한다.
+        """
+        try:
+            r = conn.execute(
+                "MATCH (ps:ProcessStep)-[:USES_EQUIPMENT]->(eq:Equipment)-[:HAS_READING]->(sr:SensorReading) "
+                "WHERE ps.id = $id "
+                "RETURN sr.value ORDER BY sr.timestamp DESC LIMIT 20",
+                {"id": step_id})
+            values = []
+            while r.has_next():
+                v = r.get_next()[0]
+                if v is not None:
+                    values.append(float(v))
+            if len(values) < 3:
+                return 0.0
+            mean = sum(values) / len(values)
+            variance = sum((v - mean) ** 2 for v in values) / len(values)
+            return round(variance, 4)
+        except Exception:
+            return 0.0
+
+    def rank_rul_weibull(self, conn, limit: int = 5) -> list[dict]:
+        """Weibull 생존분석 기반 RUL 추정 (업계 표준 방식).
+
+        기존 rank_rul_risks_v1(휴리스틱)보다 통계적으로 견고한 RUL을 제공한다.
+        """
+        return self._weibull.estimate(conn, limit=limit)
 
     @staticmethod
     def _priority(risk_score: float, rul_hours: float) -> str:
