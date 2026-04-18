@@ -315,6 +315,85 @@ export interface IncidentAnalysis {
   tokens_used: number;
 }
 
+// ── Causal Discovery ──
+
+export interface CausalDiscoveryResult {
+  candidates_tested: number;
+  after_pruning: number;
+  promoted_rules: Array<{
+    id: string;
+    cause: string;
+    effect: string;
+    strength: number;
+    p_value?: number;
+  }>;
+  total_discovered: number;
+}
+
+// ── Evolution Agent ──
+
+export interface EvolutionCycleResult {
+  cycle_number: number;
+  strategies_run: number;
+  strategies_improved: number;
+  strategy_summary: Array<{
+    name: string;
+    fitness: number;
+    executions: number;
+    active: boolean;
+  }>;
+  mutations_tested: number;
+  best_strategy?: string;
+  overall_fitness: number;
+}
+
+// ── LLM Orchestrator ──
+
+export interface OrchestratorDecision {
+  step_id: string;
+  path: 'rule_based' | 'llm' | 'llm_fallback';
+  reason: string;
+  complexity_score: number;
+}
+
+// ── L5 Learning Layer (Evolution → Ontology) ──
+
+export interface LearningRecordEvent {
+  iteration: number;
+  record_id: string;
+  cycle_number: number;
+  overall_fitness: number;
+  improvement_delta: number;
+  mutations_created: number;
+  supersedes_linked: boolean;
+}
+
+// ── Safety Guard (LLM → HITL) ──
+
+export interface LLMSafetyGuardEvent {
+  iteration: number;
+  step_id: string;
+  safety_level: string;
+  hypotheses_capped: number;
+  reason: string;
+}
+
+// ── Predictive Maintenance (RUL → Ontology) ──
+
+export interface RULCriticalEntry {
+  equipment_id: string;
+  step_id?: string;
+  priority: string;
+  rul_hours_median: number;
+  risk_score: number;
+}
+
+export interface RULCriticalEvent {
+  iteration: number;
+  upserted: number;
+  critical_equipment: RULCriticalEntry[];
+}
+
 // ── Engine State ──
 
 export interface EngineState {
@@ -359,6 +438,13 @@ export interface EngineState {
   l3Snapshot?: Record<string, unknown>;
   l3Trends?: Record<string, unknown>[];
   crossInvestigations?: Array<Record<string, unknown>>;
+  // L4 Tier 1: Causal Discovery + Evolution + LLM Orchestrator
+  causalDiscovery?: CausalDiscoveryResult;
+  evolutionCycle?: EvolutionCycleResult;
+  latestOrchestratorDecision?: OrchestratorDecision;
+  latestRULCritical?: RULCriticalEvent;
+  latestLearningRecord?: LearningRecordEvent;
+  latestLLMSafetyGuard?: LLMSafetyGuardEvent;
 }
 
 // ── WS Command ──

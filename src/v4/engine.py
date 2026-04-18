@@ -1,43 +1,48 @@
 """
 SelfHealingEngine --- v4 자율 복구 엔진
 =========================================
-v3의 온톨로지 개선 루프(OBSERVE->PROPOSE->DEBATE->APPLY->EVALUATE->LEARN) 위에
-실시간 자율 복구 루프(DETECT->DIAGNOSE->RECOVER->VERIFY->LEARN)를 추가한다.
+v3 온톨로지 개선 루프(OBSERVE→PROPOSE→DEBATE→APPLY→EVALUATE→LEARN) 위에
+실시간 자율 복구 루프(SENSE→DETECT→DIAGNOSE→RECOVER→VERIFY→LEARN)를 추가한다.
 
-WebSocket을 통해 매 단계마다 이벤트를 발행하여 프론트엔드에서 실시간 시각화 가능.
+페이즈 로직은 `v4/phases/*.py`에, HITL 정책은 `_engine_hitl.py`에,
+상태/영속화는 `_engine_state.py`에 분리되어 있다. 본 모듈은 오케스트레이션만 담당.
 """
 import asyncio
-import json
 import os
-import time
 import traceback
 from datetime import datetime
 
 from v3.engine import HarnessEngine
-from v4.sensor_simulator import SensorSimulator, extend_schema_l2, store_readings, store_alarm
+from v4.sensor_simulator import SensorSimulator, extend_schema_l2
 from v4.healing_agents import (
     AnomalyDetector,
     RootCauseAnalyzer,
     AutoRecoveryAgent,
     ResilienceOrchestrator,
-    RISK_NUMERIC,
-    requires_hitl,
 )
 from v4.causal import extend_schema_l3, seed_causal_knowledge, CausalReasoner
 from v4.correlation import extend_schema_correlation, CorrelationAnalyzer, CrossProcessInvestigator
 from v4.scenarios import ScenarioEngine
 from v4.llm_analyst import LLMAnalyst
 from v4.llm_agents import PredictiveAgent, NaturalLanguageDiagnoser
-from v4.decision_layer import extend_schema_l4, seed_l4_policy, load_active_policy, update_active_policy
+from v4.decision_layer import extend_schema_l4, seed_l4_policy, load_active_policy
 from v4.advanced_detection import AdvancedAnomalyDetector
-from v4.weibull_rul import WeibullRULEstimator
+from v4.weibull_rul import WeibullRULEstimator, extend_schema_rul_estimate
+from v4.learning_layer import extend_schema_l5
 from v4.traceability import extend_schema_traceability, TraceabilityManager
 from v4.protocol_bridge import SimulatedBridge
 from v4.event_bus import EventBus
+from v4.causal_discovery import CausalDiscoveryEngine
+from v4.evolution_agent import EvolutionAgent
+from v4.llm_orchestrator import LLMOrchestrator
+
+from v4._engine_hitl import HITLMixin
+from v4._engine_state import StateMixin
+from v4.phases import sense, detect, diagnose, recover, verify, learn, periodic
 
 
-class SelfHealingEngine(HarnessEngine):
-    """v4 자율 복구 엔진. v3의 온톨로지 개선 + 실시간 이상 감지/진단/복구."""
+class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
+    """v4 자율 복구 엔진. v3 온톨로지 개선 + 실시간 이상 감지/진단/복구."""
 
     def __init__(self, data_path="data/graph_data.json", db_path="kuzu_v4_live", results_dir="results"):
         super().__init__(data_path=data_path, db_path=db_path)
@@ -45,26 +50,29 @@ class SelfHealingEngine(HarnessEngine):
         # Healing-specific agents and state
         self.sensor_sim = None
         self.anomaly_detector = None
-        self.advanced_detector = None    # Matrix Profile + IsolationForest
+        self.advanced_detector = None
         self.root_cause_analyzer = None
         self.auto_recovery = None
         self.resilience = None
         self.causal_reasoner = None
         self.predictive_agent = None
-        self.weibull_rul = None          # Weibull 생존분석 RUL
+        self.weibull_rul = None
         self.nl_diagnoser = None
-        self.traceability = None         # 배터리 추적성 관리
-        self.sensor_bridge = None        # 프로토콜 브릿지
-        self.event_bus = None            # 이벤트 버스
+        self.traceability = None
+        self.sensor_bridge = None
+        self.event_bus = None
+        self.causal_discovery = None
+        self.evolution_agent = None
+        self.llm_orchestrator = None
         self.healing_counters = {"reading": 0, "alarm": 0, "incident": 0, "recovery": 0}
-        self.healing_history = []       # list of incident records
+        self.healing_history = []
         self.healing_iteration = 0
         self.healing_running = False
         self.results_dir = results_dir
         self.l3_trend_history = []
         self.latest_l3_snapshot = {}
         self.latest_predictive = []
-        self.latest_weibull_rul = []     # Weibull RUL 결과
+        self.latest_weibull_rul = []
         self.orchestrator_traces = []
         self.hitl_pending = []
         self.hitl_audit = []
@@ -77,26 +85,32 @@ class SelfHealingEngine(HarnessEngine):
     # ── INIT ──────────────────────────────────────────────
 
     async def initialize(self):
-        """DB, 에이전트, 센서 시뮬레이터를 초기화한다."""
-        # v3 초기화 (스키마 + 에이전트 + 메트릭)
+        """DB 스키마, 에이전트, 센서 시뮬레이터 초기화."""
         await super().initialize()
 
-        # L2 스키마 확장 (SensorReading, Alarm, Incident, RecoveryAction 등)
-        extend_schema_l2(self.conn)
+        self._extend_schemas()
+        self._init_agents()
+        self._init_evolution_state()
+        self._reset_runtime_state()
+        self._load_persisted_policy()
 
-        # L3 인과 추론 계층 확장
+        await self._emit("healing_initialized", {
+            "sensor_count": getattr(self.sensor_sim, "sensor_count", 0),
+            "agents": _agent_descriptions(self.llm_orchestrator),
+        })
+
+    def _extend_schemas(self):
+        extend_schema_l2(self.conn)
         extend_schema_l3(self.conn)
         seed_causal_knowledge(self.conn, self.healing_counters)
         extend_schema_l4(self.conn)
         seed_l4_policy(self.conn)
-
-        # 상관분석 스키마 확장
         extend_schema_correlation(self.conn)
-
-        # L5 추적성 스키마 확장 (EU Battery Regulation 대응)
         extend_schema_traceability(self.conn)
+        extend_schema_rul_estimate(self.conn)
+        extend_schema_l5(self.conn)
 
-        # 자율 복구 에이전트 초기화
+    def _init_agents(self):
         self.sensor_sim = SensorSimulator(self.conn)
         self.anomaly_detector = AnomalyDetector()
         self.advanced_detector = AdvancedAnomalyDetector()
@@ -116,7 +130,26 @@ class SelfHealingEngine(HarnessEngine):
         self.sensor_bridge.connect()
         self.event_bus = EventBus()
 
-        # 카운터/이력 리셋
+        self.causal_discovery = CausalDiscoveryEngine()
+        self.llm_orchestrator = LLMOrchestrator()
+        self.evolution_agent = EvolutionAgent(evolution_interval=5)
+        self.evolution_agent.register_strategies(
+            self.conn, self.anomaly_detector, self.causal_reasoner,
+            self.correlation_analyzer, self.auto_recovery, self.scenario_engine,
+            causal_discovery=self.causal_discovery,
+        )
+
+    def _init_evolution_state(self):
+        """L5 LearningRecord 영속 경로 + 재시작 복원."""
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self._evo_state_path = os.path.join(project_root, "results", "evolution_state.json")
+        self._causal_disc_path = os.path.join(project_root, "results", "causal_discovery_state.json")
+        if self.evolution_agent.load_state(self._evo_state_path):
+            print(f"  [L5] EvolutionAgent 상태 복원: cycle={self.evolution_agent.cycle_count}")
+        if self.causal_discovery.load_state(self._causal_disc_path):
+            print(f"  [L5] CausalDiscovery 상태 복원: pairs={len(self.causal_discovery.discovered_pairs)}")
+
+    def _reset_runtime_state(self):
         self.healing_counters = {"reading": 0, "alarm": 0, "incident": 0, "recovery": 0}
         self.healing_history = []
         self.healing_iteration = 0
@@ -133,6 +166,8 @@ class SelfHealingEngine(HarnessEngine):
             "high_risk_threshold": 0.75,
             "medium_requires_history": False,
         }
+
+    def _load_persisted_policy(self):
         self._load_hitl_runtime_state()
         graph_policy = load_active_policy(self.conn)
         if graph_policy:
@@ -142,812 +177,33 @@ class SelfHealingEngine(HarnessEngine):
                 "medium_requires_history": graph_policy["medium_requires_history"],
             })
 
-        await self._emit("healing_initialized", {
-            "sensor_count": self.sensor_sim.sensor_count
-                if hasattr(self.sensor_sim, "sensor_count") else 0,
-            "agents": {
-                "anomaly_detector": {
-                    "name": "AnomalyDetector",
-                    "description": "SPC 기반 실시간 이상 감지",
-                },
-                "root_cause_analyzer": {
-                    "name": "RootCauseAnalyzer",
-                    "description": "온톨로지 경로 역추적 원인 진단",
-                },
-                "auto_recovery": {
-                    "name": "AutoRecoveryAgent",
-                    "description": "파라미터 자동 보정 및 복구",
-                },
-                "causal_reasoner": {
-                    "name": "CausalReasoner",
-                    "description": "인과관계 체인 기반 RCA 강화",
-                },
-                "correlation_analyzer": {
-                    "name": "CorrelationAnalyzer",
-                    "description": "공정 간 센서 상관분석 — 교차 원인 추적",
-                },
-                "cross_investigator": {
-                    "name": "CrossProcessInvestigator",
-                    "description": "상관관계 + 온톨로지 경로 교차 검증",
-                },
-                "predictive_agent": {
-                    "name": "PredictiveAgent",
-                    "description": "RUL 기반 선제적 정비 우선순위",
-                },
-                "nl_diagnoser": {
-                    "name": "NaturalLanguageDiagnoser",
-                    "description": "자연어 질의 기반 진단 요약",
-                },
-            },
-        })
-
     # ── SINGLE HEALING ITERATION ──────────────────────────
 
     async def run_healing_iteration(self):
-        """자율 복구 루프 1회: SENSE -> DETECT -> DIAGNOSE -> RECOVER -> VERIFY -> LEARN."""
+        """SENSE → DETECT → DIAGNOSE → RECOVER → VERIFY → LEARN 1 사이클."""
         it = self.healing_iteration
         delay = 0.3 * self.speed
 
         try:
-            # ⓪ SCENARIO — 장애 시나리오 주입
-            scenario_effects = self.scenario_engine.tick()
-            if it % 4 == 1 and not self.scenario_engine.get_active_scenarios():
-                activated = self.scenario_engine.activate_random()
-                if activated:
-                    await self._emit("scenario_activated", {
-                        "iteration": it + 1,
-                        "scenario": activated,
-                    })
+            await sense.maybe_activate_scenario(self, it)
+            sense_out = await sense.run(self, it, delay)
 
-            # ① SENSE ─────────────────────────────────────
-            await self._emit("phase", {
-                "iteration": it + 1,
-                "phase": "sense",
-                "message": "센서 데이터를 수집합니다...",
-            })
-            await asyncio.sleep(delay)
-
-            readings = self.sensor_sim.generate_readings()
-            stored_count = store_readings(self.conn, readings, self.healing_counters)
-
-            # 원시 readings에서 정상범위 이탈 개수 (간이 카운트)
-            anomaly_count_raw = sum(
-                1 for r in readings if r.get("out_of_range", False)
-            )
-
-            await self._emit("sense_done", {
-                "iteration": it + 1,
-                "reading_count": len(readings),
-                "anomaly_count_raw": anomaly_count_raw,
-            })
-            await asyncio.sleep(delay)
-
-            # ①-b CORRELATE — 센서 간 상관분석
-            self.correlation_analyzer.ingest(readings)
-            if it >= 1:  # 매 이터레이션마다 상관분석 실행 (조기 활성화)
-                correlations = self.correlation_analyzer.analyze_all()
-                if correlations:
-                    stored = self.cross_investigator.store_discovered_correlations(
-                        self.conn, correlations, self.healing_counters
-                    )
-                    await self._emit("correlation_found", {
-                        "iteration": it + 1,
-                        "correlations": [
-                            {
-                                "source": c["source_step"],
-                                "target": c["target_step"],
-                                "coefficient": c["coefficient"],
-                                "direction": c["direction"],
-                                "sensors": f"{c['source_sensor']}↔{c['target_sensor']}",
-                            }
-                            for c in correlations[:5]
-                        ],
-                        "total_found": len(correlations),
-                        "stored_new": stored,
-                    })
-
-            # ② DETECT ────────────────────────────────────
-            await self._emit("phase", {
-                "iteration": it + 1,
-                "phase": "detect",
-                "message": "이상 패턴을 감지합니다...",
-            })
-            await asyncio.sleep(delay)
-
-            self.anomaly_detector.update(readings)
-            anomalies = self.anomaly_detector.detect(readings)
-
-            # Advanced Detection (CUSUM + Matrix Profile + Isolation Forest)
-            self.advanced_detector.update(readings)
-            advanced_anomalies = self.advanced_detector.detect(readings)
-            # 기존 SPC에서 놓친 이상만 추가 (step_id 중복 제거)
-            spc_steps = {a.get("step_id") for a in anomalies}
-            for adv in advanced_anomalies:
-                if adv.get("step_id") not in spc_steps:
-                    anomalies.append(adv)
-
-            # 알람 체크
-            alarms = self.sensor_sim.check_alarms(readings)
-            for alarm in alarms:
-                store_alarm(self.conn, alarm, self.healing_counters)
-
-            steps_affected = list({
-                a.get("step_id", "unknown") for a in anomalies
-            })
-
-            await self._emit("detect_done", {
-                "iteration": it + 1,
-                "anomalies": [
-                    {
-                        "step_id": a.get("step_id"),
-                        "sensor": a.get("sensor"),
-                        "type": a.get("type", "unknown"),
-                        "severity": a.get("severity", "medium"),
-                        "value": a.get("value"),
-                    }
-                    for a in anomalies
-                ],
-                "alarm_count": len(alarms),
-                "steps_affected": steps_affected,
-            })
-            await asyncio.sleep(delay)
-
+            detect_out = await detect.run(self, it, delay, sense_out["readings"])
+            anomalies = detect_out["anomalies"]
             if not anomalies:
-                await self._emit("all_clear", {
-                    "iteration": it + 1,
-                    "message": "이상 없음 - 모든 센서 정상 범위",
-                    "reading_count": len(readings),
-                })
                 return
 
-            # ③ DIAGNOSE ──────────────────────────────────
-            await self._emit("phase", {
-                "iteration": it + 1,
-                "phase": "diagnose",
-                "message": "원인을 진단합니다...",
-            })
-            await asyncio.sleep(delay)
+            diag_out = await diagnose.run(self, it, delay, anomalies)
+            recover_out = await recover.run(self, it, delay, anomalies, diag_out["diagnoses"])
+            verify_out = await verify.run(
+                self, it, delay, recover_out["recovery_results"], anomalies,
+            )
+            await learn.run(
+                self, it, delay, anomalies, diag_out["diagnoses"],
+                recover_out["recovery_results"], verify_out["verifications"],
+            )
 
-            diagnoses = []
-            for anomaly in anomalies:
-                try:
-                    # 1단계: 경로 기반 기본 진단
-                    basic_diag = self.root_cause_analyzer.analyze(self.conn, anomaly)
-                    # 2단계: 인과관계 기반 강화 진단
-                    causal_diag = self.causal_reasoner.analyze(self.conn, anomaly, basic_diag)
-                    diagnoses.append(causal_diag)
-                except Exception as exc:
-                    diagnoses.append({
-                        "step_id": anomaly.get("step_id"),
-                        "candidates": [],
-                        "causal_chains_found": 0,
-                        "failure_chain_matched": False,
-                        "analysis_method": "failed",
-                        "error": str(exc),
-                    })
-
-            # ③-b 교차 원인 분석 (상관관계 기반)
-            cross_investigations = []
-            for anomaly in anomalies:
-                try:
-                    inv = self.cross_investigator.investigate(
-                        self.conn, anomaly, self.correlation_analyzer
-                    )
-                    if inv.get("cross_causes"):
-                        cross_investigations.append(inv)
-                except Exception:
-                    pass
-
-            await self._emit("diagnose_done", {
-                "iteration": it + 1,
-                "diagnoses": [
-                    {
-                        "step_id": d.get("step_id"),
-                        "top_cause": d["candidates"][0]["cause_type"] if d.get("candidates") else "unknown",
-                        "confidence": round(d["candidates"][0]["confidence"], 3) if d.get("candidates") else 0.0,
-                        "causal_chain": d["candidates"][0].get("causal_chain") if d.get("candidates") else None,
-                        "candidates_count": len(d.get("candidates", [])),
-                        "causal_chains": d.get("causal_chains_found", 0),
-                        "history_matched": d.get("failure_chain_matched", False),
-                        "method": d.get("analysis_method", "basic"),
-                    }
-                    for d in diagnoses
-                ],
-                "cross_investigations": [
-                    {
-                        "step_id": inv["step_id"],
-                        "cross_causes": [
-                            {
-                                "other_step": c["step_id"],
-                                "other_name": c["step_name"],
-                                "relationship": c["relationship"],
-                                "correlation": c["correlation"],
-                                "confidence": c["confidence"],
-                                "evidence": c["evidence"],
-                                "action": c["recommended_action"],
-                            }
-                            for c in inv["cross_causes"][:3]
-                        ],
-                        "hidden_dependencies": inv["hidden_dependencies"],
-                    }
-                    for inv in cross_investigations
-                ],
-            })
-            await asyncio.sleep(delay)
-
-            # ④ RECOVER ───────────────────────────────────
-            await self._emit("phase", {
-                "iteration": it + 1,
-                "phase": "recover",
-                "message": "자동 복구를 실행합니다...",
-            })
-            await asyncio.sleep(delay)
-
-            recovery_results = []
-            for diagnosis, anomaly in zip(diagnoses, anomalies):
-                try:
-                    step_id = anomaly.get("step_id")
-                    pre_yield_baseline = self._get_step_yield(step_id)
-                    actions = self.auto_recovery.plan_recovery(
-                        self.conn, diagnosis, anomaly,
-                    )
-                    if not actions:
-                        recovery_results.append({
-                            "step_id": anomaly.get("step_id"),
-                            "action_type": "none",
-                            "target": None,
-                            "success": False,
-                            "pre_yield": pre_yield_baseline,
-                            "detail": "복구 액션을 생성하지 못함",
-                        })
-                        continue
-
-                    # Safety-grade-aware confidence override
-                    step_safety = 'C'
-                    try:
-                        r = self.conn.execute(
-                            "MATCH (ps:ProcessStep) WHERE ps.id=$id RETURN ps.safety_level",
-                            {"id": step_id},
-                        )
-                        if r.has_next():
-                            step_safety = r.get_next()[0] or 'C'
-                    except Exception:
-                        pass
-
-                    safety_confidence = {
-                        'A': max(0.65, float(self.hitl_policy.get("min_confidence", 0.40))),
-                        'B': float(self.hitl_policy.get("min_confidence", 0.40)),
-                        'C': min(0.35, float(self.hitl_policy.get("min_confidence", 0.40))),
-                    }.get(step_safety, float(self.hitl_policy.get("min_confidence", 0.40)))
-
-                    # HITL 판단 (첫 번째 액션 기준으로 전체 escalation 여부 결정)
-                    hitl_needed = False
-                    hitl_reason = ""
-                    if actions:
-                        hitl_needed, hitl_reason = requires_hitl(
-                            actions[0],
-                            diagnosis,
-                            min_confidence=safety_confidence,
-                            high_risk_threshold=float(self.hitl_policy.get("high_risk_threshold", 0.6)),
-                            medium_requires_history=bool(self.hitl_policy.get("medium_requires_history", True)),
-                        )
-
-                    # Multi-step recovery: LOW → MEDIUM → HIGH 순으로 시도
-                    recovery_success = False
-                    executed_action = None
-                    result = {}
-                    recover_started = time.time()
-                    for action in actions[:3]:  # try up to 3 actions in escalating risk order
-                        if hitl_needed and action.get("risk_level") in ("HIGH", "CRITICAL"):
-                            continue  # skip high risk if HITL flagged
-                        result = self.auto_recovery.execute_recovery(
-                            self.conn, action, self.healing_counters,
-                        )
-                        if result.get("success"):
-                            recovery_success = True
-                            executed_action = action
-                            break
-                    recovery_time_sec = max(0.0, time.time() - recover_started)
-
-                    # 모든 복구 실패 시 대체 경로 탐색
-                    if not recovery_success:
-                        alts = self.resilience.find_alternate_path(self.conn, step_id)
-                        if alts:
-                            alt_result = self.resilience.activate_alternate(self.conn, step_id, alts[0])
-                            if alt_result.get("success"):
-                                recovery_success = True
-                                executed_action = {
-                                    "action_type": "ALTERNATE_PATH",
-                                    "target_step": step_id,
-                                    "parameter": None,
-                                    "old_value": None,
-                                    "new_value": alt_result.get("alternate"),
-                                    "confidence": 0.5,
-                                    "risk_level": "MEDIUM",
-                                    "cause_type": "alternate_path",
-                                    "cause_name": f"alternate via {alt_result.get('type', 'unknown')}",
-                                    "playbook_source": "resilience_orchestrator",
-                                    "playbook_id": None,
-                                }
-
-                    if not recovery_success and hitl_needed:
-                        best_action = actions[0] if actions else {"risk_level": "CRITICAL", "confidence": 0.0}
-                        pending_id = f"HITL-{it + 1:04d}-{len(self.hitl_pending) + 1:03d}"
-                        pending = {
-                            "id": pending_id,
-                            "iteration": it + 1,
-                            "created_at": datetime.now().isoformat(),
-                            "step_id": step_id,
-                            "anomaly_type": anomaly.get("anomaly_type", "unknown"),
-                            "top_cause": diagnosis["candidates"][0]["cause_type"] if diagnosis.get("candidates") else "unknown",
-                            "reason": hitl_reason,
-                            "action": best_action,
-                            "status": "pending",
-                        }
-                        self.hitl_pending.append(pending)
-                        self.hitl_pending = self.hitl_pending[-50:]
-                        self._append_hitl_audit("queued", "system", {
-                            "hitl_id": pending_id,
-                            "step_id": step_id,
-                            "reason": hitl_reason,
-                        })
-                        self._persist_hitl_runtime_state()
-                        await self._emit("recover_pending_hitl", pending)
-                        recovery_results.append({
-                            "step_id": anomaly.get("step_id"),
-                            "action_type": "ESCALATE",
-                            "target": best_action.get("target_step"),
-                            "success": False,
-                            "recovery_id": None,
-                            "pre_yield": pre_yield_baseline,
-                            "detail": f"HITL required: {hitl_reason}",
-                            "risk_level": best_action.get("risk_level"),
-                            "confidence": best_action.get("confidence"),
-                            "playbook_id": best_action.get("playbook_id"),
-                            "playbook_source": best_action.get("playbook_source"),
-                            "hitl_required": True,
-                            "hitl_id": pending_id,
-                        })
-                        continue
-
-                    final_action = executed_action or (actions[0] if actions else {})
-                    recovery_results.append({
-                        "step_id": anomaly.get("step_id"),
-                        "action_type": final_action.get("action_type", "unknown"),
-                        "target": final_action.get("target_step"),
-                        "success": recovery_success,
-                        "recovery_id": result.get("recovery_id") if recovery_success else None,
-                        "pre_yield": pre_yield_baseline,
-                        "detail": result.get("detail", "") if recovery_success else "모든 복구 액션 실패",
-                        "risk_level": final_action.get("risk_level"),
-                        "confidence": final_action.get("confidence"),
-                        "playbook_id": final_action.get("playbook_id"),
-                        "playbook_source": final_action.get("playbook_source"),
-                        "hitl_required": False,
-                        "recovery_time_sec": round(recovery_time_sec, 4),
-                    })
-                except Exception as exc:
-                    recovery_results.append({
-                        "step_id": anomaly.get("step_id"),
-                        "action_type": "error",
-                        "target": None,
-                        "success": False,
-                        "pre_yield": None,
-                        "detail": str(exc),
-                        "recovery_time_sec": None,
-                    })
-
-            await self._emit("recover_done", {
-                "iteration": it + 1,
-                "actions": recovery_results,
-            })
-            await asyncio.sleep(delay)
-
-            # ⑤ VERIFY ────────────────────────────────────
-            await self._emit("phase", {
-                "iteration": it + 1,
-                "phase": "verify",
-                "message": "복구 결과를 검증합니다...",
-            })
-            await asyncio.sleep(delay)
-
-            verifications = []
-            for rr, anomaly in zip(recovery_results, anomalies):
-                step_id = rr.get("step_id") or anomaly.get("step_id")
-                pre_yield = rr.get("pre_yield")
-                if pre_yield is None:
-                    pre_yield = self._get_step_yield(step_id)
-                if pre_yield is None:
-                    pre_yield = anomaly.get("pre_yield", 0.0)
-                try:
-                    verification = self.auto_recovery.verify_recovery(
-                        self.conn, step_id, pre_yield,
-                    )
-                    verifications.append({
-                        "step_id": step_id,
-                        "pre_yield": pre_yield,
-                        "post_yield": verification.get("post_yield"),
-                        "improved": verification.get(
-                            "improved", verification.get("verified", False)
-                        ),
-                    })
-                except Exception as exc:
-                    verifications.append({
-                        "step_id": step_id,
-                        "pre_yield": pre_yield,
-                        "post_yield": None,
-                        "improved": False,
-                        "error": str(exc),
-                    })
-
-            # 최신 전체 메트릭 갱신
-            try:
-                gm = self.skill_registry.execute("graph_metrics", self.conn, {}, "system")
-                updated_metrics = gm.get("metrics", self.current_metrics)
-                self.current_metrics = updated_metrics
-            except Exception:
-                updated_metrics = self.current_metrics
-
-            # Phase4: PredictiveAgent RUL 추정
-            predictive = []
-            try:
-                predictive = self.predictive_agent.rank_rul_risks_v1(self.conn, limit=5)
-                self.latest_predictive = predictive
-            except Exception:
-                predictive = self.latest_predictive
-
-            # Weibull 생존분석 RUL (업계 표준: Uptake, ABB Ability)
-            try:
-                weibull_results = self.weibull_rul.estimate(self.conn, limit=5)
-                self.latest_weibull_rul = weibull_results
-            except Exception:
-                weibull_results = self.latest_weibull_rul
-
-            await self._emit("verify_done", {
-                "iteration": it + 1,
-                "verifications": verifications,
-                "metrics": updated_metrics,
-                "predictive": predictive,
-                "weibull_rul": weibull_results,
-            })
-            await asyncio.sleep(delay)
-
-            # ⑥ LEARN (healing) ───────────────────────────
-            await self._emit("phase", {
-                "iteration": it + 1,
-                "phase": "learn_healing",
-                "message": "복구 결과를 학습합니다...",
-            })
-            await asyncio.sleep(delay)
-
-            incidents_recorded = 0
-            knowledge_updates = 0
-            auto_recovered_count = 0
-            l3_links_created = 0
-
-            for anomaly, diagnosis, rr, verification in zip(
-                anomalies, diagnoses, recovery_results, verifications,
-            ):
-                step_id = anomaly.get("step_id", "unknown")
-                auto_recovered = rr.get("success", False)
-                improved = verification.get("improved", False)
-                if rr.get("action_type") == "ESCALATE":
-                    auto_recovered = False
-                top_cause = ""
-                if diagnosis.get("candidates"):
-                    top_cause = diagnosis["candidates"][0].get("cause_type", "")
-
-                # 에이전트 지식 업데이트
-                try:
-                    self.anomaly_detector.learn(anomaly, diagnosis, rr)
-                    knowledge_updates += 1
-                except Exception:
-                    pass
-
-                try:
-                    self.root_cause_analyzer.learn(
-                        step_id, anomaly.get("sensor_type", ""), top_cause
-                    )
-                    knowledge_updates += 1
-                except Exception:
-                    pass
-
-                try:
-                    self.auto_recovery.learn(
-                        rr.get("action_type", "unknown"),
-                        top_cause or "unknown",
-                        bool(auto_recovered and improved),
-                    )
-                    knowledge_updates += 1
-                except Exception:
-                    pass
-
-                # 인과 추론 학습 (FailureChain 축적)
-                try:
-                    self.causal_reasoner.learn_from_recovery(
-                        self.conn, step_id,
-                        anomaly.get("sensor_type", ""),
-                        anomaly.get("anomaly_type", ""),
-                        top_cause,
-                        bool(auto_recovered and improved),
-                        float(rr.get("recovery_time_sec", 0.5) or 0.5),
-                        self.healing_counters,
-                    )
-                    knowledge_updates += 1
-                except Exception:
-                    pass
-
-                # 이력 기록
-                # 인과 추론 결과에서 원인 추출
-                top_cause = "unknown"
-                top_confidence = 0.0
-                causal_chain = ""
-                top_evidence_refs = []
-                rca_breakdown = None
-                if diagnosis.get("candidates"):
-                    c = diagnosis["candidates"][0]
-                    top_cause = c.get("cause_type", "unknown")
-                    top_confidence = c.get("confidence", 0.0)
-                    causal_chain = c.get("causal_chain", "") or ""
-                    top_evidence_refs = c.get("evidence_refs", []) or []
-                    rca_breakdown = c.get("rca_score_breakdown")
-
-                incident = {
-                    "id": f"INC-{self.healing_counters['incident'] + 1:04d}",
-                    "iteration": it + 1,
-                    "timestamp": datetime.now().isoformat(),
-                    "step_id": step_id,
-                    "anomaly_type": anomaly.get("type", anomaly.get("anomaly_type", "unknown")),
-                    "severity": anomaly.get("severity", "medium"),
-                    "top_cause": top_cause,
-                    "confidence": round(top_confidence, 3),
-                    "causal_chain": causal_chain,
-                    "history_matched": diagnosis.get("failure_chain_matched", False),
-                    "matched_chain_id": diagnosis.get("matched_chain_id"),
-                    "candidates_count": len(diagnosis.get("candidates", [])),
-                    "causal_chains_found": diagnosis.get("causal_chains_found", 0),
-                    "analysis_method": diagnosis.get("analysis_method", "causal_reasoning"),
-                    "matched_pattern_id": diagnosis.get("matched_pattern_id"),
-                    "matched_pattern_type": diagnosis.get("matched_pattern_type"),
-                    "evidence_refs": top_evidence_refs[:6],
-                    "rca_score_breakdown": rca_breakdown,
-                    "action_type": rr.get("action_type", "none"),
-                    "risk_level": rr.get("risk_level"),
-                    "playbook_id": rr.get("playbook_id"),
-                    "playbook_source": rr.get("playbook_source"),
-                    "hitl_required": bool(rr.get("hitl_required", False)),
-                    "hitl_id": rr.get("hitl_id"),
-                    "escalation_reason": rr.get("detail") if rr.get("action_type") == "ESCALATE" else None,
-                    "recovery_time_sec": rr.get("recovery_time_sec"),
-                    "auto_recovered": auto_recovered,
-                    "improved": improved,
-                    "pre_yield": verification.get("pre_yield"),
-                    "post_yield": verification.get("post_yield"),
-                }
-                self.healing_history.append(incident)
-                self.healing_counters["incident"] += 1
-                incidents_recorded += 1
-                if auto_recovered:
-                    auto_recovered_count += 1
-
-                # Incident 노드를 DB에 저장
-                try:
-                    self.conn.execute(
-                        "CREATE (inc:Incident {"
-                        "id: $id, step_id: $step_id, alarm_id: '', "
-                        "root_cause: $cause, recovery_action: $action, "
-                        "resolved: $resolved, auto_recovered: $recovered, timestamp: $ts"
-                        "})",
-                        {
-                            "id": incident["id"],
-                            "step_id": step_id,
-                            "cause": incident["top_cause"],
-                            "action": incident["action_type"],
-                            "resolved": auto_recovered,
-                            "recovered": auto_recovered,
-                            "ts": incident["timestamp"],
-                        },
-                    )
-                except Exception:
-                    # Incident 테이블이 없거나 중복일 수 있음 - 무시
-                    pass
-
-                # 과거 FailureChain 매칭이 있으면 Incident와 연결
-                matched_chain_id = diagnosis.get("matched_chain_id")
-                if not matched_chain_id:
-                    matched_chain_id = self.causal_reasoner.chain_cache.get(
-                        (step_id, anomaly.get("sensor_type", ""))
-                    )
-                if matched_chain_id:
-                    try:
-                        self.conn.execute(
-                            "MATCH (inc:Incident), (fc:FailureChain) "
-                            "WHERE inc.id = $inc_id AND fc.id = $fc_id "
-                            "CREATE (inc)-[:MATCHED_BY]->(fc)",
-                            {"inc_id": incident["id"], "fc_id": matched_chain_id},
-                        )
-                    except Exception:
-                        pass
-
-                if rr.get("action_type") == "ESCALATE":
-                    try:
-                        self.conn.execute(
-                            "MATCH (inc:Incident), (p:EscalationPolicy) "
-                            "WHERE inc.id=$inc_id AND p.id='EP-DEFAULT' "
-                            "CREATE (inc)-[:ESCALATES_TO]->(p)",
-                            {"inc_id": incident["id"]},
-                        )
-                    except Exception:
-                        pass
-
-                # 기본 L2 관계 연결: ProcessStep -> Incident, Incident -> RecoveryAction
-                try:
-                    self.conn.execute(
-                        "MATCH (ps:ProcessStep), (inc:Incident) "
-                        "WHERE ps.id = $step_id AND inc.id = $inc_id "
-                        "CREATE (ps)-[:HAS_INCIDENT]->(inc)",
-                        {"step_id": step_id, "inc_id": incident["id"]},
-                    )
-                except Exception:
-                    pass
-
-                recovery_id = rr.get("recovery_id")
-                if recovery_id:
-                    try:
-                        self.conn.execute(
-                            "MATCH (inc:Incident), (ra:RecoveryAction) "
-                            "WHERE inc.id = $inc_id AND ra.id = $ra_id "
-                            "CREATE (inc)-[:RESOLVED_BY]->(ra)",
-                            {"inc_id": incident["id"], "ra_id": recovery_id},
-                        )
-                    except Exception:
-                        pass
-
-                # ProcessStep -> CausalRule, CausalRule -> AnomalyPattern 연결 강화
-                if top_cause:
-                    try:
-                        self.conn.execute(
-                            "MATCH (ps:ProcessStep), (cr:CausalRule) "
-                            "WHERE ps.id = $step_id AND (cr.cause_type = $cause OR cr.effect_type = $cause) "
-                            "AND NOT (ps)-[:HAS_CAUSE]->(cr) "
-                            "CREATE (ps)-[:HAS_CAUSE]->(cr)",
-                            {"step_id": step_id, "cause": top_cause},
-                        )
-                        l3_links_created += 1
-                    except Exception:
-                        pass
-
-                    anomaly_type = anomaly.get("anomaly_type", "threshold_breach")
-                    pattern_type = {
-                        "trend_shift": "drift",
-                        "statistical_outlier": "spike",
-                        "threshold_breach": "level_shift",
-                    }.get(anomaly_type, "spike")
-
-                    try:
-                        self.conn.execute(
-                            "MATCH (cr:CausalRule), (ap:AnomalyPattern) "
-                            "WHERE (cr.cause_type = $cause OR cr.effect_type = $cause) "
-                            "AND ap.pattern_type = $ptype "
-                            "AND NOT (cr)-[:HAS_PATTERN]->(ap) "
-                            "CREATE (cr)-[:HAS_PATTERN]->(ap)",
-                            {"cause": top_cause, "ptype": pattern_type},
-                        )
-                        l3_links_created += 1
-                    except Exception:
-                        pass
-
-            await self._emit("learn_done_healing", {
-                "iteration": it + 1,
-                "incidents_recorded": incidents_recorded,
-                "auto_recovered_count": auto_recovered_count,
-                "knowledge_updates": knowledge_updates,
-                "l3_links_created": l3_links_created,
-                "l3_snapshot": self._record_l3_snapshot(it + 1),
-                "recent_incidents": self.healing_history[-5:],
-            })
-            # 3회마다 replay calibration
-            if (it + 1) % 3 == 0:
-                cal = self.causal_reasoner.replay_calibration(self.conn)
-                await self._emit("causal_calibrated", {"iteration": it + 1, **cal})
-
-            # 5회마다 에이전트 플레이북 자기진화
-            if (it + 1) % 5 == 0:
-                mutation_result = self.auto_recovery.mutate_playbook()
-                if mutation_result.get("mutations_applied", 0) > 0:
-                    await self._emit("playbook_mutated", {"iteration": it + 1, **mutation_result})
-
-            # 5회마다 시나리오 난이도 적응
-            if (it + 1) % 5 == 0:
-                total_inc = len(self.healing_history)
-                auto_rec = sum(1 for h in self.healing_history if h.get("auto_recovered"))
-                adapt_result = self.scenario_engine.adapt_difficulty({
-                    "total_incidents": total_inc,
-                    "auto_recovered": auto_rec,
-                })
-                await self._emit("scenario_difficulty_adapted", {"iteration": it + 1, **adapt_result})
-
-            # Traceability — 배치별 품질 추적 (Tesla/Samsung SDI 방식)
-            try:
-                for rr in recovery_results:
-                    if rr.get("step_id"):
-                        batch = self.traceability.create_batch(
-                            self.conn, rr["step_id"], batch_size=96,
-                            energy_kwh=round(0.5 + 0.3 * len(recovery_results), 2),
-                        )
-                        yield_val = rr.get("pre_yield", 0.95)
-                        defects = 1 if not rr.get("success") else 0
-                        self.traceability.complete_batch(
-                            self.conn, batch["batch_id"],
-                            yield_rate=yield_val, defect_count=defects,
-                        )
-            except Exception:
-                pass
-
-            # Event Bus — 복구 결과 이벤트 발행
-            try:
-                for rr in recovery_results:
-                    evt_type = "recovery_success" if rr.get("success") else "recovery_failed"
-                    self.event_bus.publish_sync(evt_type, rr, source="healing_loop")
-            except Exception:
-                pass
-
-            # LLM 분석 — 이번 이터레이션의 인시던트 각각에 대해 (최대 3건 배치)
-            llm_batch_count = 0
-            llm_max_batch = 3
-            this_iteration_incidents = [
-                inc for inc in self.healing_history
-                if inc.get("iteration") == it + 1
-            ]
-            for batch_inc in this_iteration_incidents[:llm_max_batch]:
-                if not self.llm_analyst.available:
-                    break
-                try:
-                    # 인시던트 데이터 구성
-                    step_name = ""
-                    try:
-                        r = self.conn.execute("MATCH (ps:ProcessStep) WHERE ps.id=$id RETURN ps.name", {"id": batch_inc.get("step_id","")})
-                        if r.has_next():
-                            step_name = r.get_next()[0]
-                    except Exception:
-                        pass
-
-                    inc_data = {
-                        "incident_id": batch_inc.get("id", ""),
-                        "step_id": batch_inc.get("step_id", ""),
-                        "step_name": step_name,
-                        "anomaly": {
-                            "sensor_type": batch_inc.get("anomaly_type", ""),
-                            "severity": batch_inc.get("severity", "MEDIUM"),
-                            "anomaly_type": batch_inc.get("anomaly_type", ""),
-                        },
-                        "diagnosis": {
-                            "top_cause": batch_inc.get("top_cause", ""),
-                            "confidence": batch_inc.get("confidence", 0),
-                            "causal_chain": batch_inc.get("causal_chain", ""),
-                            "history_matched": batch_inc.get("history_matched", False),
-                        },
-                        "cross_investigation": {
-                            "correlated_steps": self.correlation_analyzer.get_correlations_for_step(batch_inc.get("step_id","")),
-                        },
-                        "recovery": {
-                            "action_type": batch_inc.get("action_type", ""),
-                            "success": batch_inc.get("auto_recovered", False),
-                            "pre_yield": batch_inc.get("pre_yield"),
-                            "post_yield": batch_inc.get("post_yield"),
-                        },
-                    }
-                    # 활성 시나리오가 있으면 포함
-                    active_scn = self.scenario_engine.get_active_scenarios()
-                    if active_scn:
-                        inc_data["scenario"] = {"name": active_scn[0].get("name",""), "category": active_scn[0].get("category","")}
-
-                    analysis = self.llm_analyst.analyze_incident_sync(inc_data)
-                    await self._emit("incident_analysis", analysis)
-                    llm_batch_count += 1
-                except Exception:
-                    pass
-
+            await self._run_periodic(it, recover_out["recovery_results"])
             self._persist_healing_summary()
 
         except Exception as exc:
@@ -959,14 +215,23 @@ class SelfHealingEngine(HarnessEngine):
         finally:
             self.healing_iteration += 1
 
+    async def _run_periodic(self, it: int, recovery_results: list):
+        """주기적 메타 작업 — 캘리브레이션/진화/시나리오/LLM 분석."""
+        await periodic.maybe_calibrate_causal(self, it)
+        await periodic.maybe_mutate_playbook(self, it)
+        await periodic.maybe_adapt_scenario(self, it)
+        await periodic.maybe_discover_causal(self, it)
+        await periodic.maybe_evolve_agents(self, it)
+        periodic.update_traceability(self, recovery_results)
+        periodic.publish_recovery_events(self, recovery_results)
+        await periodic.llm_batch_analysis(self, it)
+
     # ── HEALING LOOP ──────────────────────────────────────
 
     async def run_healing_loop(self):
         """자율 복구 루프를 연속 실행한다."""
         self.healing_running = True
-        await self._emit("healing_loop_started", {
-            "max_iterations": self.max_iterations,
-        })
+        await self._emit("healing_loop_started", {"max_iterations": self.max_iterations})
 
         while self.healing_running and self.healing_iteration < self.max_iterations:
             if self.paused:
@@ -980,17 +245,12 @@ class SelfHealingEngine(HarnessEngine):
         await self._emit("healing_loop_finished", {
             "total_iterations": self.healing_iteration,
             "total_incidents": len(self.healing_history),
-            "auto_recovered": sum(
-                1 for h in self.healing_history if h.get("auto_recovered")
-            ),
+            "auto_recovered": sum(1 for h in self.healing_history if h.get("auto_recovered")),
             "metrics": self.current_metrics,
         })
 
-    # ── FULL CYCLE (v3 + v4) ─────────────────────────────
-
     async def run_full_cycle(self):
         """v3 온톨로지 개선 + v4 자율 복구를 순차 실행한다."""
-        # Phase 1: 온톨로지 개선 (v3) — 5 iterations for faster cycles
         original_max = self.max_iterations
         self.max_iterations = 5
         await self._emit("phase_ontology", {
@@ -998,390 +258,32 @@ class SelfHealingEngine(HarnessEngine):
         })
         await self.run_loop()  # v3 loop
 
-        # Phase 2: 자율 복구 시뮬레이션 (v4) — restore to 10 for healing
         self.max_iterations = 10
         await self._emit("phase_healing", {
             "message": "Phase 2: 자율 복구 시뮬레이션 시작 (10 iterations)...",
         })
         await self.run_healing_loop()
 
-        # Restore original max_iterations
         self.max_iterations = original_max
 
-    async def resolve_hitl(
-        self,
-        hitl_id: str,
-        approve: bool,
-        operator: str = "operator",
-        role: str = "operator",
-    ):
-        """HITL 대기 액션을 승인/거절한다."""
-        item = None
-        for h in self.hitl_pending:
-            if h.get("id") == hitl_id and h.get("status") == "pending":
-                item = h
-                break
-        if not item:
-            return {"ok": False, "reason": "not_found_or_already_resolved", "id": hitl_id}
-
-        if not approve:
-            item["status"] = "rejected"
-            item["resolved_at"] = datetime.now().isoformat()
-            item["operator"] = operator
-            item["operator_role"] = role
-            self._append_hitl_audit("rejected", operator, {"hitl_id": hitl_id}, role=role)
-            self._persist_hitl_runtime_state()
-            await self._emit("hitl_resolved", {"id": hitl_id, "status": "rejected", "operator": operator})
-            return {"ok": True, "status": "rejected", "id": hitl_id}
-
-        # 고위험/저신뢰 액션은 supervisor 이상만 승인 가능
-        reason = str(item.get("reason", "") or "")
-        if role != "supervisor" and ("high_risk" in reason or "low_confidence" in reason):
-            item["status"] = "denied"
-            item["resolved_at"] = datetime.now().isoformat()
-            item["operator"] = operator
-            item["operator_role"] = role
-            self._append_hitl_audit(
-                "approve_denied",
-                operator,
-                {"hitl_id": hitl_id, "reason": "supervisor_required"},
-                role=role,
-            )
-            self._persist_hitl_runtime_state()
-            await self._emit(
-                "hitl_resolved",
-                {
-                    "id": hitl_id,
-                    "status": "denied",
-                    "operator": operator,
-                    "reason": "supervisor_required",
-                },
-            )
-            return {"ok": False, "status": "denied", "id": hitl_id, "reason": "supervisor_required"}
-
-        action = item.get("action", {})
-        item["status"] = "approved"
-        item["resolved_at"] = datetime.now().isoformat()
-        item["operator"] = operator
-        item["operator_role"] = role
-        try:
-            result = self.auto_recovery.execute_recovery(self.conn, action, self.healing_counters)
-            payload = {
-                "id": hitl_id,
-                "status": "approved",
-                "operator": operator,
-                "action_type": action.get("action_type"),
-                "step_id": action.get("target_step"),
-                "result": result,
-            }
-            self._append_hitl_audit(
-                "approved",
-                operator,
-                {"hitl_id": hitl_id, "action_type": action.get("action_type")},
-                role=role,
-            )
-            self._persist_hitl_runtime_state()
-            await self._emit("hitl_resolved", payload)
-            return {"ok": True, **payload}
-        except Exception as exc:
-            item["status"] = "failed"
-            item["error"] = str(exc)
-            self._append_hitl_audit("approve_failed", operator, {"hitl_id": hitl_id, "error": str(exc)}, role=role)
-            self._persist_hitl_runtime_state()
-            await self._emit("hitl_resolved", {
-                "id": hitl_id,
-                "status": "failed",
-                "operator": operator,
-                "error": str(exc),
-            })
-            return {"ok": False, "status": "failed", "id": hitl_id, "error": str(exc)}
-
-    # ── STATE ─────────────────────────────────────────────
-
-    def get_state(self):
-        """현재 엔진 상태를 반환한다 (v3 + v4)."""
-        state = super().get_state()
-        state["healing"] = {
-            "iteration": self.healing_iteration,
-            "running": self.healing_running,
-            "incidents": len(self.healing_history),
-            "auto_recovered": sum(
-                1 for h in self.healing_history if h.get("auto_recovered")
-            ),
-            "counters": dict(self.healing_counters),
-            "recent_incidents": self.healing_history[-5:],  # last 5
-            "recurrence_kpis": self._compute_recurrence_kpis(),
-            "hitl_pending": self.hitl_pending[-20:],
-            "hitl_audit": self.hitl_audit[-30:],
-            "hitl_policy": dict(self.hitl_policy),
-        }
-        state["phase4"] = {
-            "predictive_agent": self.predictive_agent is not None,
-            "nl_diagnoser": self.nl_diagnoser is not None,
-            "llm_orchestrator": bool(self.nl_diagnoser and self.nl_diagnoser.get_status().get("llm_enabled")),
-            "model": self.nl_diagnoser.get_status().get("model") if self.nl_diagnoser else "none",
-            "latest_predictive": self.latest_predictive[:5],
-            "weibull_rul": self.latest_weibull_rul[:5],
-            "orchestrator_traces": self.orchestrator_traces[-20:],
-        }
-        # 업계 사례 기반 확장 모듈 상태
-        state["industry_modules"] = {
-            "advanced_detection": self.advanced_detector.get_status() if self.advanced_detector else {},
-            "traceability": self.traceability.get_batch_stats(self.conn) if self.traceability else {},
-            "sensor_bridge": self.sensor_bridge.get_status() if self.sensor_bridge else {},
-            "event_bus": self.event_bus.get_stats() if self.event_bus else {},
-        }
-        state["l3_trends"] = self.l3_trend_history[-30:]
-        state["l3_snapshot"] = dict(self.latest_l3_snapshot) if self.latest_l3_snapshot else {}
-        return state
-
-    # ── L3 TREND PERSISTENCE ─────────────────────────────
-
-    def _safe_count_nodes(self, label: str) -> int:
-        try:
-            r = self.conn.execute(f"MATCH (n:{label}) RETURN count(n)")
-            if r.has_next():
-                return int(r.get_next()[0])
-        except Exception:
-            pass
-        return 0
-
-    def _safe_count_rel(self, rel_type: str) -> int:
-        try:
-            r = self.conn.execute(f"MATCH ()-[r:{rel_type}]->() RETURN count(r)")
-            if r.has_next():
-                return int(r.get_next()[0])
-        except Exception:
-            pass
-        return 0
-
-    def _collect_l3_snapshot(self, iteration: int) -> dict:
-        return {
-            "iteration": iteration,
-            "timestamp": datetime.now().isoformat(),
-            "counts": {
-                "causal_rules": self._safe_count_nodes("CausalRule"),
-                "failure_chains": self._safe_count_nodes("FailureChain"),
-                "causes": self._safe_count_rel("CAUSES"),
-                "matched_by": self._safe_count_rel("MATCHED_BY"),
-                "chain_uses": self._safe_count_rel("CHAIN_USES"),
-                "has_cause": self._safe_count_rel("HAS_CAUSE"),
-                "has_pattern": self._safe_count_rel("HAS_PATTERN"),
-            },
-        }
-
-    def _record_l3_snapshot(self, iteration: int) -> dict:
-        snapshot = self._collect_l3_snapshot(iteration)
-        self.latest_l3_snapshot = snapshot
-        self.l3_trend_history.append(snapshot)
-        self._persist_l3_trend_files()
-        return snapshot
-
-    def _persist_l3_trend_files(self):
-        try:
-            os.makedirs(self.results_dir, exist_ok=True)
-            latest_path = os.path.join(self.results_dir, "l3_trend_latest.json")
-            history_path = os.path.join(self.results_dir, "l3_trend_history.json")
-            with open(latest_path, "w", encoding="utf-8") as f:
-                json.dump(self.latest_l3_snapshot, f, ensure_ascii=False, indent=2)
-            with open(history_path, "w", encoding="utf-8") as f:
-                json.dump(self.l3_trend_history, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    def _persist_healing_summary(self):
-        try:
-            os.makedirs(self.results_dir, exist_ok=True)
-            cases = self._build_case_analyses()
-            out = {
-                "system": "SelfHealingEngine v4",
-                "timestamp": datetime.now().isoformat(),
-                "healing_iterations": self.healing_iteration,
-                "total_incidents": len(self.healing_history),
-                "auto_recovered": sum(1 for h in self.healing_history if h.get("auto_recovered")),
-                "current_metrics": self.current_metrics,
-                "healing_counters": dict(self.healing_counters),
-                "latest_l3_snapshot": self.latest_l3_snapshot,
-                "l3_trend_points": len(self.l3_trend_history),
-                "recent_incidents": self.healing_history[-20:],
-                "case_analyses": cases,
-                "recurrence_kpis": self._compute_recurrence_kpis(),
-                "hitl_pending": self.hitl_pending[-20:],
-                "hitl_audit": self.hitl_audit[-30:],
-                "hitl_policy": dict(self.hitl_policy),
-            }
-            latest_path = os.path.join(self.results_dir, "self_healing_v4_latest.json")
-            with open(latest_path, "w", encoding="utf-8") as f:
-                json.dump(out, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    def _get_step_yield(self, step_id):
-        if not step_id:
-            return None
-        try:
-            r = self.conn.execute(
-                "MATCH (ps:ProcessStep) WHERE ps.id=$sid RETURN ps.yield_rate",
-                {"sid": step_id},
-            )
-            if r.has_next():
-                v = r.get_next()[0]
-                if v is None:
-                    return None
-                return float(v)
-        except Exception:
-            pass
-        return None
-
-    def _build_case_analyses(self):
-        analyses = []
-        for inc in self.healing_history[-20:]:
-            pre = inc.get("pre_yield")
-            post = inc.get("post_yield")
-            delta = None
-            delta_pct = None
-            quality_flag = None
-            if isinstance(pre, (int, float)) and isinstance(post, (int, float)):
-                delta = round(post - pre, 6)
-                if pre != 0:
-                    delta_pct = round((delta / pre) * 100, 2)
-            if isinstance(pre, (int, float)) and (pre < 0 or pre > 1.2):
-                quality_flag = "pre_yield_outlier"
-
-            analyses.append({
-                "incident_id": inc.get("id"),
-                "step_id": inc.get("step_id"),
-                "issue": {
-                    "anomaly_type": inc.get("anomaly_type"),
-                    "severity": inc.get("severity"),
-                    "top_cause": inc.get("top_cause"),
-                    "confidence": inc.get("confidence"),
-                },
-                "recovery": {
-                    "action_type": inc.get("action_type"),
-                    "auto_recovered": inc.get("auto_recovered"),
-                    "improved": inc.get("improved"),
-                },
-                "effect": {
-                    "pre_yield": pre,
-                    "post_yield": post,
-                    "delta": delta,
-                    "delta_pct": delta_pct,
-                },
-                "quality_flag": quality_flag,
-                "timestamp": inc.get("timestamp"),
-            })
-        return analyses
-
-    def _compute_recurrence_kpis(self):
-        incidents = self.healing_history
-        if not incidents:
-            return {
-                "matched_chain_rate": 0.0,
-                "repeat_incident_rate": 0.0,
-                "matched_auto_recovery_rate": 0.0,
-                "matched_avg_recovery_sec": 0.0,
-                "unmatched_avg_recovery_sec": 0.0,
-                "graph_playbook_rate": 0.0,
-                "hardcoded_fallback_rate": 0.0,
-                "total": 0,
-            }
-        matched = [x for x in incidents if x.get("history_matched")]
-        keys = [f"{x.get('step_id')}|{x.get('anomaly_type')}|{x.get('top_cause')}" for x in incidents]
-        uniq = set(keys)
-        repeat_count = len(keys) - len(uniq)
-        matched_auto = [x for x in matched if x.get("auto_recovered")]
-        matched_times = [float(x.get("recovery_time_sec")) for x in matched if isinstance(x.get("recovery_time_sec"), (int, float))]
-        unmatched = [x for x in incidents if not x.get("history_matched")]
-        unmatched_times = [float(x.get("recovery_time_sec")) for x in unmatched if isinstance(x.get("recovery_time_sec"), (int, float))]
-        with_playbook = [x for x in incidents if x.get("playbook_source")]
-        graph_playbook = [
-            x for x in with_playbook
-            if str(x.get("playbook_source", "")).startswith("graph")
-        ]
-        hardcoded_fallback = [
-            x for x in with_playbook
-            if str(x.get("playbook_source", "")) == "hardcoded"
-        ]
-        total = len(incidents)
-        return {
-            "matched_chain_rate": round(len(matched) / total, 4),
-            "repeat_incident_rate": round(repeat_count / total, 4),
-            "matched_auto_recovery_rate": round(len(matched_auto) / max(len(matched), 1), 4),
-            "matched_avg_recovery_sec": round(sum(matched_times) / max(len(matched_times), 1), 4),
-            "unmatched_avg_recovery_sec": round(sum(unmatched_times) / max(len(unmatched_times), 1), 4),
-            "graph_playbook_rate": round(len(graph_playbook) / max(len(with_playbook), 1), 4),
-            "hardcoded_fallback_rate": round(len(hardcoded_fallback) / max(len(with_playbook), 1), 4),
-            "total": total,
-        }
-
-    async def update_hitl_policy(self, patch: dict, operator: str = "operator", role: str = "operator"):
-        """HITL 정책을 런타임에서 업데이트한다."""
-        prev_policy = dict(self.hitl_policy)
-        if role != "supervisor":
-            self._append_hitl_audit(
-                "policy_update_denied",
-                operator,
-                {"reason": "supervisor_required", "patch": patch or {}},
-                role=role,
-            )
-            await self._emit("hitl_policy_update_denied", {"reason": "supervisor_required", "operator": operator, "role": role})
-            return dict(self.hitl_policy)
-
-        def _clip(v, lo, hi):
-            try:
-                f = float(v)
-            except Exception:
-                f = lo
-            return max(lo, min(hi, f))
-
-        if "min_confidence" in patch:
-            self.hitl_policy["min_confidence"] = _clip(patch.get("min_confidence"), 0.3, 0.95)
-        if "high_risk_threshold" in patch:
-            self.hitl_policy["high_risk_threshold"] = _clip(patch.get("high_risk_threshold"), 0.3, 0.95)
-        if "medium_requires_history" in patch:
-            self.hitl_policy["medium_requires_history"] = bool(patch.get("medium_requires_history"))
-
-        self._append_hitl_audit(
-            "policy_updated",
-            operator,
-            {
-                "prev": prev_policy,
-                "next": dict(self.hitl_policy),
-                "diff": self._policy_diff(prev_policy, self.hitl_policy),
-            },
-            role=role,
-        )
-        update_active_policy(self.conn, self.hitl_policy)
-        self._persist_hitl_runtime_state()
-        await self._emit(
-            "hitl_policy_updated",
-            {
-                "policy": dict(self.hitl_policy),
-                "prev_policy": prev_policy,
-                "diff": self._policy_diff(prev_policy, self.hitl_policy),
-                "operator": operator,
-                "role": role,
-            },
-        )
-        return dict(self.hitl_policy)
+    # ── INTENT ROUTING ────────────────────────────────────
 
     async def route_intent(self, intent: str, payload: dict | None = None):
         """Hybrid orchestrator-style intent routing."""
         p = payload or {}
         intent_key = (intent or "").strip().lower()
+
         if intent_key in ("nl_diagnose", "diagnose_query", "ask_why"):
-            q = str(p.get("query", ""))
-            result = self.nl_diagnoser.analyze(self.conn, q)
+            result = self.nl_diagnoser.analyze(self.conn, str(p.get("query", "")))
             return await self._emit_route_trace(intent_key, "NaturalLanguageDiagnoser", result)
         if intent_key in ("predictive_priority", "rul", "maintenance_priority"):
-            limit = int(p.get("limit", 5) or 5)
-            result = self.predictive_agent.rank_rul_risks_v1(self.conn, limit=max(1, min(20, limit)))
+            limit = max(1, min(20, int(p.get("limit", 5) or 5)))
+            result = self.predictive_agent.rank_rul_risks_v1(self.conn, limit=limit)
             return await self._emit_route_trace(intent_key, "PredictiveAgent", result)
         if intent_key in ("healing_status", "status"):
             result = self.get_state().get("healing", {})
             return await self._emit_route_trace(intent_key, "SelfHealingEngine", result)
-        if intent_key in ("explain_step",):
+        if intent_key == "explain_step":
             step_id = str(p.get("step_id", ""))
             incidents = [x for x in self.healing_history if x.get("step_id") == step_id][-10:]
             result = {
@@ -1390,9 +292,37 @@ class SelfHealingEngine(HarnessEngine):
                 "summary": self.nl_diagnoser.analyze(self.conn, f"{step_id} 최근 이슈 원인과 재발 리스크 요약"),
             }
             return await self._emit_route_trace(intent_key, "Hybrid(History+NL)", result)
-        result = {"intent": intent_key, "delegated_to": "none", "error": "unsupported_intent"}
+        if intent_key in ("llm_analyze", "deep_analyze"):
+            return await self._handle_deep_analyze(intent_key, p)
+        if intent_key == "evolution_status":
+            result = self.evolution_agent.get_status() if self.evolution_agent else {}
+            return await self._emit_route_trace(intent_key, "EvolutionAgent", result)
+        if intent_key == "causal_discovery_status":
+            result = self.causal_discovery.get_status() if self.causal_discovery else {}
+            return await self._emit_route_trace(intent_key, "CausalDiscoveryEngine", result)
+
         await self._emit("orchestrator_trace", {"intent": intent_key, "delegated_to": "none", "ok": False})
-        return result
+        return {"intent": intent_key, "delegated_to": "none", "error": "unsupported_intent"}
+
+    async def _handle_deep_analyze(self, intent_key: str, p: dict):
+        step_id = str(p.get("step_id", ""))
+        recent = [x for x in self.healing_history if x.get("step_id") == step_id][-5:]
+        if not recent or not self.llm_orchestrator:
+            return await self._emit_route_trace(
+                intent_key, "LLMOrchestrator",
+                {"error": "no_recent_incidents", "step_id": step_id},
+            )
+        latest = recent[-1]
+        anomaly = {"step_id": step_id, "anomaly_type": latest.get("anomaly_type")}
+        diagnosis = {
+            "candidates": [{
+                "cause_type": latest.get("top_cause"),
+                "confidence": latest.get("confidence", 0.5),
+            }],
+            "failure_chain_matched": latest.get("history_matched", False),
+        }
+        result = await self.llm_orchestrator.invoke_llm_reasoning(self.conn, anomaly, diagnosis)
+        return await self._emit_route_trace(intent_key, "LLMOrchestrator", result)
 
     async def _emit_route_trace(self, intent: str, delegated_to: str, result):
         trace = {
@@ -1404,102 +334,138 @@ class SelfHealingEngine(HarnessEngine):
         self.orchestrator_traces.append(trace)
         self.orchestrator_traces = self.orchestrator_traces[-200:]
         await self._emit("orchestrator_trace", trace)
-        return {
-            "intent": intent,
-            "delegated_to": delegated_to,
-            "result": result,
-        }
+        return {"intent": intent, "delegated_to": delegated_to, "result": result}
 
-    def evaluate_policy_variants(self):
-        """Offline replay-style policy sweep on recorded incidents."""
-        incidents = self.healing_history[-300:]
-        if not incidents:
-            return {"variants": [], "base_total": 0}
-        variants = []
-        for conf in (0.55, 0.62, 0.7, 0.78):
-            for risk in (0.5, 0.6, 0.7):
-                hitl = 0
-                auto = 0
-                for inc in incidents:
-                    c = float(inc.get("confidence", 0.0) or 0.0)
-                    rname = str(inc.get("risk_level", "MEDIUM"))
-                    rnum = RISK_NUMERIC.get(rname, 0.5)
-                    hmatched = bool(inc.get("history_matched", False))
-                    if c < conf or rnum >= risk or (rnum >= 0.3 and not hmatched):
-                        hitl += 1
-                    else:
-                        auto += 1
-                variants.append({
-                    "min_confidence": conf,
-                    "high_risk_threshold": risk,
-                    "hitl_rate": round(hitl / max(len(incidents), 1), 4),
-                    "auto_rate": round(auto / max(len(incidents), 1), 4),
-                    "sample": len(incidents),
+    # ── RECOVERY HELPERS (used by phases) ─────────────────
+
+    async def _execute_recovery_with_backoff(
+        self, action: dict, max_attempts: int = 3, base_delay: float = 0.05,
+    ) -> tuple[dict, int]:
+        """복구 액션을 transient 실패에 대해 지수 백오프로 재시도한다.
+
+        - execute_recovery()가 예외를 던지거나 success=False + transient=True면 재시도
+        - 지수 백오프: base * 2^(attempt-1)
+        - 영구 실패는 즉시 반환
+
+        Returns: (result_dict, attempts_count)
+        """
+        last_result: dict = {"success": False}
+        for attempt in range(1, max_attempts + 1):
+            try:
+                last_result = self.auto_recovery.execute_recovery(
+                    self.conn, action, self.healing_counters,
+                )
+                if last_result.get("success"):
+                    return last_result, attempt
+                if not last_result.get("transient"):
+                    return last_result, attempt
+            except Exception as exc:
+                last_result = {"success": False, "error": str(exc), "transient": True}
+            if attempt < max_attempts:
+                await asyncio.sleep(base_delay * (2 ** (attempt - 1)))
+        return last_result, max_attempts
+
+    async def _merge_llm_hypotheses(
+        self, iteration: int, anomaly: dict, causal_diag: dict,
+        llm_result: dict | None, orch_decision: dict,
+    ) -> None:
+        """LLM 가설을 causal_diag에 병합 + 안전등급 A는 자동실행 차단을 위해 confidence 캡."""
+        anomaly_step_id = anomaly.get("step_id", "")
+        step_safety = self._get_step_safety_level(anomaly_step_id)
+        hypotheses = (llm_result.get("hypotheses") or []) if llm_result else []
+        guarded = False
+
+        if hypotheses:
+            requires_llm_hitl = (step_safety == "A")
+            for hyp in hypotheses[:2]:
+                hyp_conf = float(hyp.get("confidence", 0.5))
+                if requires_llm_hitl:
+                    # min_confidence(0.65) 미달로 캡하여 HITL 강제
+                    hyp_conf = min(hyp_conf, 0.59)
+                    guarded = True
+                causal_diag.setdefault("candidates", []).append({
+                    "cause_type": hyp.get("cause_type", "llm_hypothesis"),
+                    "confidence": hyp_conf,
+                    "evidence": hyp.get("reasoning", ""),
+                    "source": "llm_orchestrator",
+                    "causal_chain": "",
+                    "requires_hitl_override": requires_llm_hitl,
+                    "safety_level": step_safety,
                 })
-        variants.sort(key=lambda x: (x["hitl_rate"], -x["auto_rate"]))
-        return {"variants": variants[:12], "base_total": len(incidents)}
+            causal_diag["candidates"].sort(key=lambda c: -c.get("confidence", 0))
 
-    def _append_hitl_audit(
-        self,
-        action: str,
-        operator: str,
-        detail: dict | None = None,
-        role: str = "operator",
-    ):
-        self.hitl_audit.append({
-            "ts": datetime.now().isoformat(),
-            "action": action,
-            "operator": operator,
-            "role": role,
-            "detail": detail or {},
+            if guarded:
+                hypotheses_capped = len(hypotheses[:2])
+                causal_diag["llm_safety_guard"] = {
+                    "triggered": True,
+                    "safety_level": step_safety,
+                    "step_id": anomaly_step_id,
+                    "hypotheses_capped": hypotheses_capped,
+                }
+                await self._emit("llm_hypothesis_guarded", {
+                    "iteration": iteration,
+                    "step_id": anomaly_step_id,
+                    "safety_level": step_safety,
+                    "hypotheses_capped": hypotheses_capped,
+                    "reason": "safety_level_A_requires_HITL",
+                })
+
+        await self._emit("orchestrator_decision", {
+            "iteration": iteration,
+            "step_id": anomaly_step_id,
+            "path": orch_decision["path"],
+            "reason": orch_decision["reason"],
+            "complexity_score": orch_decision["complexity_score"],
+            "llm_hypotheses": len(hypotheses),
+            "safety_guarded": guarded,
         })
-        self.hitl_audit = self.hitl_audit[-200:]
 
-    @staticmethod
-    def _policy_diff(prev: dict, nxt: dict):
-        keys = ("min_confidence", "high_risk_threshold", "medium_requires_history")
-        out = {}
-        for k in keys:
-            pv = prev.get(k)
-            nv = nxt.get(k)
-            if pv != nv:
-                out[k] = {"from": pv, "to": nv}
-        return out
 
-    def _persist_hitl_runtime_state(self):
-        try:
-            os.makedirs(self.results_dir, exist_ok=True)
-            path = os.path.join(self.results_dir, "hitl_runtime_state.json")
-            payload = {
-                "policy": dict(self.hitl_policy),
-                "pending": self.hitl_pending[-200:],
-                "audit": self.hitl_audit[-500:],
-                "updated_at": datetime.now().isoformat(),
-            }
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    def _load_hitl_runtime_state(self):
-        try:
-            path = os.path.join(self.results_dir, "hitl_runtime_state.json")
-            if not os.path.exists(path):
-                return
-            with open(path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-            policy = payload.get("policy", {})
-            if isinstance(policy, dict):
-                self.hitl_policy.update({
-                    "min_confidence": float(policy.get("min_confidence", self.hitl_policy["min_confidence"])),
-                    "high_risk_threshold": float(policy.get("high_risk_threshold", self.hitl_policy["high_risk_threshold"])),
-                    "medium_requires_history": bool(policy.get("medium_requires_history", self.hitl_policy["medium_requires_history"])),
-                })
-            pending = payload.get("pending", [])
-            audit = payload.get("audit", [])
-            if isinstance(pending, list):
-                self.hitl_pending = pending[-200:]
-            if isinstance(audit, list):
-                self.hitl_audit = audit[-500:]
-        except Exception:
-            pass
+def _agent_descriptions(llm_orch) -> dict:
+    """healing_initialized 이벤트의 agents 블록."""
+    return {
+        "anomaly_detector": {
+            "name": "AnomalyDetector",
+            "description": "SPC 기반 실시간 이상 감지",
+        },
+        "root_cause_analyzer": {
+            "name": "RootCauseAnalyzer",
+            "description": "온톨로지 경로 역추적 원인 진단",
+        },
+        "auto_recovery": {
+            "name": "AutoRecoveryAgent",
+            "description": "파라미터 자동 보정 및 복구",
+        },
+        "causal_reasoner": {
+            "name": "CausalReasoner",
+            "description": "인과관계 체인 기반 RCA 강화",
+        },
+        "correlation_analyzer": {
+            "name": "CorrelationAnalyzer",
+            "description": "공정 간 센서 상관분석 — 교차 원인 추적",
+        },
+        "cross_investigator": {
+            "name": "CrossProcessInvestigator",
+            "description": "상관관계 + 온톨로지 경로 교차 검증",
+        },
+        "predictive_agent": {
+            "name": "PredictiveAgent",
+            "description": "RUL 기반 선제적 정비 우선순위",
+        },
+        "nl_diagnoser": {
+            "name": "NaturalLanguageDiagnoser",
+            "description": "자연어 질의 기반 진단 요약",
+        },
+        "causal_discovery": {
+            "name": "CausalDiscoveryEngine",
+            "description": "Granger causality 기반 자동 인과 발견",
+        },
+        "evolution_agent": {
+            "name": "EvolutionAgent",
+            "description": "전략 자기진화 메타 에이전트 — 6+α 개선 전략 관리",
+        },
+        "llm_orchestrator": {
+            "name": "LLMOrchestrator",
+            "description": f"Hybrid Agentic 오케스트레이터 ({llm_orch.provider})" if llm_orch else "비활성",
+        },
+    }
