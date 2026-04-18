@@ -483,6 +483,7 @@ export interface PreverifyState {
   auto_rejected_total: number;
   plans_total: number;
   auto_reject_rate: number;
+  current_thresholds: Record<string, number>;
 }
 
 // ── WS Command ──

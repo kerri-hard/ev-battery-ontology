@@ -159,6 +159,7 @@ const preverifyDone: EventHandler = (state, data) => {
     auto_rejected_total: prev?.auto_rejected_total ?? 0,
     plans_total: prev?.plans_total ?? 0,
     auto_reject_rate: prev?.auto_reject_rate ?? 0,
+    current_thresholds: prev?.current_thresholds ?? {},
   };
   const rejectedDetail = autoRejected > 0 ? ` — ${autoRejected}건 자동 거절` : '';
   return {

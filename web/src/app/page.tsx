@@ -6,6 +6,7 @@ import Header from '@/components/layout/Header';
 import Sidebar from '@/components/layout/Sidebar';
 import OntologyGraph from '@/components/graph/OntologyGraph';
 import IncidentAnalysis from '@/components/issues/IncidentAnalysis';
+import PreverifyPanel from '@/components/preverify/PreverifyPanel';
 import SparklineChart from '@/components/charts/SparklineChart';
 import Badge from '@/components/common/Badge';
 import { apiUrl } from '@/lib/api';
@@ -430,6 +431,7 @@ function Dashboard() {
                 sparkData={metricsHistory.completeness} color="#f59e0b" />
               </div>
               <ResearchProgressPanel />
+              <PreverifyPanel />
               <PredictiveRiskPanel />
               <OrchestratorPanel />
               <RecoveryCasePanel />

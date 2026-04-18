@@ -71,6 +71,7 @@ class StateMixin:
             "plans_total": plans_total,
             "auto_reject_rate": round(rejected_total / plans_total, 4) if plans_total else 0.0,
             "recent_predictions": recent[-10:],
+            "current_thresholds": dict(getattr(self, "preverify_thresholds", {})),
         }
 
     # ── L3 trend persistence ──────────────────────
