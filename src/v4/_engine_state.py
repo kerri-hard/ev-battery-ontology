@@ -42,9 +42,36 @@ class StateMixin:
             "sensor_bridge": self.sensor_bridge.get_status() if self.sensor_bridge else {},
             "event_bus": self.event_bus.get_stats() if self.event_bus else {},
         }
+        state["preverify"] = self._preverify_state_block()
         state["l3_trends"] = self.l3_trend_history[-30:]
         state["l3_snapshot"] = dict(self.latest_l3_snapshot) if self.latest_l3_snapshot else {}
         return state
+
+    def _preverify_state_block(self) -> dict:
+        """PRE-VERIFY 페이즈 메트릭: 예측 정확도 + auto-reject 누적."""
+        history = getattr(self, "preverify_accuracy_history", []) or []
+        counters = getattr(self, "preverify_counters", {"plans_total": 0, "auto_rejected_total": 0})
+
+        recent = history[-30:]
+        if recent:
+            mae = sum(s["abs_error"] for s in recent) / len(recent)
+            sign_matches = sum(1 for s in recent if s["sign_match"])
+            sign_accuracy = sign_matches / len(recent)
+        else:
+            mae = 0.0
+            sign_accuracy = 0.0
+
+        plans_total = counters.get("plans_total", 0)
+        rejected_total = counters.get("auto_rejected_total", 0)
+        return {
+            "mae_recent": round(mae, 6),
+            "sign_accuracy_recent": round(sign_accuracy, 4),
+            "samples_recent": len(recent),
+            "auto_rejected_total": rejected_total,
+            "plans_total": plans_total,
+            "auto_reject_rate": round(rejected_total / plans_total, 4) if plans_total else 0.0,
+            "recent_predictions": recent[-10:],
+        }
 
     # ── L3 trend persistence ──────────────────────
 

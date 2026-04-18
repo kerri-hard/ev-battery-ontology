@@ -1,4 +1,10 @@
-import type { CausalDiscoveryResult, EvolutionCycleResult, OrchestratorDecision } from '@/types';
+import type {
+  CausalDiscoveryResult,
+  EvolutionCycleResult,
+  OrchestratorDecision,
+  PreverifyPlan,
+  PreverifyState,
+} from '@/types';
 import { addLog, type EventHandler } from './helpers';
 
 const orchestratorTrace: EventHandler = (state, data) => {
@@ -138,6 +144,34 @@ const rulCritical: EventHandler = (state, data) => {
   };
 };
 
+const preverifyDone: EventHandler = (state, data) => {
+  const plans = (data.plans as PreverifyPlan[]) || [];
+  const autoRejected = (data.auto_rejected as number) || 0;
+  const prev = state.preverify;
+  const next: PreverifyState = {
+    latestPlans: plans,
+    iteration: (data.iteration as number) || state.iteration,
+    autoRejectedThisRound: autoRejected,
+    // accumulated metrics come from `state` event; preserve previous values
+    mae_recent: prev?.mae_recent ?? 0,
+    sign_accuracy_recent: prev?.sign_accuracy_recent ?? 0,
+    samples_recent: prev?.samples_recent ?? 0,
+    auto_rejected_total: prev?.auto_rejected_total ?? 0,
+    plans_total: prev?.plans_total ?? 0,
+    auto_reject_rate: prev?.auto_reject_rate ?? 0,
+  };
+  const rejectedDetail = autoRejected > 0 ? ` — ${autoRejected}건 자동 거절` : '';
+  return {
+    ...state,
+    preverify: next,
+    eventLog: addLog(
+      state.eventLog,
+      null,
+      `Pre-verify: ${plans.length}건 시뮬레이션${rejectedDetail}`,
+    ),
+  };
+};
+
 export const intelligenceHandlers: Record<string, EventHandler> = {
   orchestrator_trace: orchestratorTrace,
   causal_calibrated: causalCalibrated,
@@ -147,4 +181,5 @@ export const intelligenceHandlers: Record<string, EventHandler> = {
   learning_record_created: learningRecordCreated,
   llm_hypothesis_guarded: llmHypothesisGuarded,
   rul_critical: rulCritical,
+  preverify_done: preverifyDone,
 };

@@ -56,12 +56,14 @@ def _verify_yields(engine, recovery_results: list, anomalies: list) -> list:
 
         try:
             verification = engine.auto_recovery.verify_recovery(engine.conn, step_id, pre_yield)
+            post_yield = verification.get("post_yield")
             verifications.append({
                 "step_id": step_id,
                 "pre_yield": pre_yield,
-                "post_yield": verification.get("post_yield"),
+                "post_yield": post_yield,
                 "improved": verification.get("improved", verification.get("verified", False)),
             })
+            _record_preverify_accuracy(engine, step_id, pre_yield, post_yield)
         except Exception as exc:
             verifications.append({
                 "step_id": step_id,
@@ -71,6 +73,34 @@ def _verify_yields(engine, recovery_results: list, anomalies: list) -> list:
                 "error": str(exc),
             })
     return verifications
+
+
+def _record_preverify_accuracy(engine, step_id: str, pre_yield, post_yield) -> None:
+    """preverify가 예측한 expected_delta와 실제 yield delta를 비교하여 누적.
+
+    이 메트릭이 곧 PRE-VERIFY 게이트의 신뢰도. EvolutionAgent가 향후
+    안전등급별 score 임계값을 조정할 때 fitness signal로 사용 가능.
+    """
+    if pre_yield is None or post_yield is None:
+        return
+    predicted = engine._latest_preverify_predictions.get(step_id)
+    if not predicted:
+        return
+
+    actual_delta = float(post_yield) - float(pre_yield)
+    predicted_delta = float(predicted.get("expected_delta", 0.0))
+    error = actual_delta - predicted_delta
+
+    engine.preverify_accuracy_history.append({
+        "step_id": step_id,
+        "predicted_delta": round(predicted_delta, 6),
+        "actual_delta": round(actual_delta, 6),
+        "error": round(error, 6),
+        "abs_error": round(abs(error), 6),
+        "sign_match": (predicted_delta > 0) == (actual_delta > 0),
+        "iteration": engine.healing_iteration + 1,
+    })
+    engine.preverify_accuracy_history = engine.preverify_accuracy_history[-200:]
 
 
 def _refresh_metrics(engine) -> dict:

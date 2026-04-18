@@ -445,6 +445,44 @@ export interface EngineState {
   latestRULCritical?: RULCriticalEvent;
   latestLearningRecord?: LearningRecordEvent;
   latestLLMSafetyGuard?: LLMSafetyGuardEvent;
+  // L4 Tier 2: PRE-VERIFY phase (CDT decision validation)
+  preverify?: PreverifyState;
+}
+
+export interface PreverifySimulation {
+  action_type: string;
+  cause_type: string;
+  parameter: string | null;
+  predicted_new_value: number | null;
+  expected_delta: number;
+  param_delta: number;
+  success_prob: number;
+  risk_factor: number;
+  confidence: number;
+  score: number;
+  hist_attempts: number;
+}
+
+export interface PreverifyPlan {
+  step_id: string;
+  selected_action: string | null;
+  selected_score: number | null;
+  rejected_reason: string | null;
+  candidate_count: number;
+  top_simulations: PreverifySimulation[];
+}
+
+export interface PreverifyState {
+  latestPlans: PreverifyPlan[];
+  iteration: number;
+  autoRejectedThisRound: number;
+  // Accumulated metrics from server state
+  mae_recent: number;
+  sign_accuracy_recent: number;
+  samples_recent: number;
+  auto_rejected_total: number;
+  plans_total: number;
+  auto_reject_rate: number;
 }
 
 // ── WS Command ──

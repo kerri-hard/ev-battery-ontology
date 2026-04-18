@@ -43,10 +43,20 @@ async def run(engine, it: int, delay: float, anomalies: list, diagnoses: list) -
     for anomaly, diagnosis in zip(anomalies, diagnoses):
         plans.append(_build_plan(engine, anomaly, diagnosis))
 
+    # verify 페이즈에서 회수해 예측 vs 실측 비교에 사용
+    engine._latest_preverify_predictions = {
+        plan["anomaly"].get("step_id"): plan["simulations"][0]
+        for plan in plans
+        if plan.get("selected") and plan.get("simulations")
+    }
+    auto_rejected = sum(1 for p in plans if p["rejected_reason"])
+    engine.preverify_counters["auto_rejected_total"] += auto_rejected
+    engine.preverify_counters["plans_total"] += len(plans)
+
     await engine._emit("preverify_done", {
         "iteration": it + 1,
         "plans": [_serialize_plan(p) for p in plans],
-        "auto_rejected": sum(1 for p in plans if p["rejected_reason"]),
+        "auto_rejected": auto_rejected,
     })
     await asyncio.sleep(delay)
 

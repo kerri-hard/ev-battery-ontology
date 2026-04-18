@@ -81,6 +81,10 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
             "high_risk_threshold": 0.75,
             "medium_requires_history": False,
         }
+        # PRE-VERIFY 메타 — 예측 vs 실측 정확도 추적
+        self._latest_preverify_predictions: dict = {}
+        self.preverify_accuracy_history: list = []
+        self.preverify_counters = {"plans_total": 0, "auto_rejected_total": 0}
 
     # ── INIT ──────────────────────────────────────────────
 
@@ -166,6 +170,9 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
             "high_risk_threshold": 0.75,
             "medium_requires_history": False,
         }
+        self._latest_preverify_predictions = {}
+        self.preverify_accuracy_history = []
+        self.preverify_counters = {"plans_total": 0, "auto_rejected_total": 0}
 
     def _load_persisted_policy(self):
         self._load_hitl_runtime_state()

@@ -1,4 +1,4 @@
-import type { EngineState, Metrics, Agent, ProcessStep } from '@/types';
+import type { EngineState, Metrics, Agent, ProcessStep, PreverifyState } from '@/types';
 import { addLog, normalizeHealingFromState, type EventHandler } from './helpers';
 
 const stateSync: EventHandler = (state, data) => {
@@ -18,11 +18,30 @@ const stateSync: EventHandler = (state, data) => {
     history: (data.history as EngineState['history']) || [],
     healing: normalizeHealingFromState(data, state.healing),
     phase4: (data.phase4 as EngineState['phase4']) || state.phase4,
+    preverify: mergePreverifyMetrics(state.preverify, data.preverify as Record<string, unknown> | undefined),
     l3Snapshot: (data.l3_snapshot as Record<string, unknown>) || state.l3Snapshot,
     l3Trends: (data.l3_trends as Record<string, unknown>[]) || state.l3Trends,
     eventLog: addLog(state.eventLog, null, '서버 연결됨'),
   };
 };
+
+function mergePreverifyMetrics(
+  prev: PreverifyState | undefined,
+  raw: Record<string, unknown> | undefined,
+): PreverifyState | undefined {
+  if (!raw) return prev;
+  return {
+    latestPlans: prev?.latestPlans ?? [],
+    iteration: prev?.iteration ?? 0,
+    autoRejectedThisRound: prev?.autoRejectedThisRound ?? 0,
+    mae_recent: Number(raw.mae_recent ?? 0),
+    sign_accuracy_recent: Number(raw.sign_accuracy_recent ?? 0),
+    samples_recent: Number(raw.samples_recent ?? 0),
+    auto_rejected_total: Number(raw.auto_rejected_total ?? 0),
+    plans_total: Number(raw.plans_total ?? 0),
+    auto_reject_rate: Number(raw.auto_reject_rate ?? 0),
+  };
+}
 
 const initialized: EventHandler = (state, data) => {
   const im = data.initial_metrics as Metrics;
