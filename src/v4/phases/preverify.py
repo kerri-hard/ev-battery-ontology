@@ -16,14 +16,26 @@ import asyncio
 from v4.healing import RISK_NUMERIC
 
 
-# 안전등급별 최소 selection_score (이 값 미만이면 자동 거절)
-_SCORE_THRESHOLD_BY_SAFETY = {
+# 안전등급별 최소 selection_score 기본값 (engine.preverify_thresholds 미설정 시 폴백).
+# 런타임에는 EvolutionAgent의 `tune_preverify_threshold` 전략이 engine 사본을 자기 진화한다.
+DEFAULT_SCORE_THRESHOLD_BY_SAFETY = {
     "A": 1e-4,    # 엄격 — 분명한 양의 기대 효과만 자동 실행
     "B": 0.0,     # 손해 안 나는 액션만
     "C": -1e-3,   # 약간의 위험 허용
 }
 
+# 하위 호환: 직접 import하던 backtest 등에서 참조
+_SCORE_THRESHOLD_BY_SAFETY = DEFAULT_SCORE_THRESHOLD_BY_SAFETY
+
 _COLD_START_ATTEMPTS = 2  # 이력 < 이 값이면 confidence를 success_prob로 사용
+
+
+def _get_score_threshold(engine, safety_level: str) -> float:
+    """engine.preverify_thresholds에서 우선 조회, 없으면 모듈 기본값."""
+    runtime = getattr(engine, "preverify_thresholds", None)
+    if runtime and safety_level in runtime:
+        return float(runtime[safety_level])
+    return DEFAULT_SCORE_THRESHOLD_BY_SAFETY.get(safety_level, 0.0)
 
 
 async def run(engine, it: int, delay: float, anomalies: list, diagnoses: list) -> dict:
@@ -83,7 +95,7 @@ def _build_plan(engine, anomaly: dict, diagnosis: dict) -> dict:
     best_action, best_sim = ranked[0]
 
     step_safety = engine._get_step_safety_level(anomaly.get("step_id", ""))
-    threshold = _SCORE_THRESHOLD_BY_SAFETY.get(step_safety, 0.0)
+    threshold = _get_score_threshold(engine, step_safety)
 
     if best_sim["score"] < threshold:
         return {

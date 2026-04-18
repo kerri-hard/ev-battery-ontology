@@ -81,10 +81,11 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
             "high_risk_threshold": 0.75,
             "medium_requires_history": False,
         }
-        # PRE-VERIFY 메타 — 예측 vs 실측 정확도 추적
+        # PRE-VERIFY 메타 — 예측 vs 실측 정확도 추적 + 자기 진화하는 임계값
         self._latest_preverify_predictions: dict = {}
         self.preverify_accuracy_history: list = []
         self.preverify_counters = {"plans_total": 0, "auto_rejected_total": 0}
+        self.preverify_thresholds = {"A": 1e-4, "B": 0.0, "C": -1e-3}
 
     # ── INIT ──────────────────────────────────────────────
 
@@ -141,6 +142,7 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
             self.conn, self.anomaly_detector, self.causal_reasoner,
             self.correlation_analyzer, self.auto_recovery, self.scenario_engine,
             causal_discovery=self.causal_discovery,
+            engine=self,  # PRE-VERIFY threshold 자기 진화에 필요
         )
 
     def _init_evolution_state(self):
@@ -173,6 +175,7 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
         self._latest_preverify_predictions = {}
         self.preverify_accuracy_history = []
         self.preverify_counters = {"plans_total": 0, "auto_rejected_total": 0}
+        self.preverify_thresholds = {"A": 1e-4, "B": 0.0, "C": -1e-3}
 
     def _load_persisted_policy(self):
         self._load_hitl_runtime_state()

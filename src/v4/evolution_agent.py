@@ -123,8 +123,13 @@ class EvolutionAgent:
 
     def register_strategies(self, conn, anomaly_detector, causal_reasoner,
                            correlation_analyzer, auto_recovery, scenario_engine,
-                           causal_discovery=None):
-        """research_loop.py의 6 전략 + CausalDiscovery를 등록한다."""
+                           causal_discovery=None, engine=None):
+        """research_loop.py의 6 전략 + CausalDiscovery + PRE-VERIFY 임계값 자기 진화 등록.
+
+        Args:
+            engine: SelfHealingEngine 인스턴스. PRE-VERIFY threshold 튜닝 전략에서
+                    preverify_accuracy_history와 preverify_thresholds 접근에 사용.
+        """
         self.strategies = []
 
         # Strategy 1: 이상 감지 임계값 조정
@@ -297,6 +302,15 @@ class EvolutionAgent:
                 "causal_discovery",
                 _trigger_discovery,
                 "Granger causality 기반 자동 인과 발견",
+            ))
+
+        # Strategy 8 (optional): PRE-VERIFY 임계값 자기 진화 — sign accuracy fitness signal
+        if engine is not None:
+            self.strategies.append(StrategyRecord(
+                "preverify_threshold_tuning",
+                _make_preverify_tuner(engine),
+                "PRE-VERIFY 예측 정확도 기반 안전등급별 threshold 자기 진화",
+                dict(engine.preverify_thresholds),
             ))
 
     # ── EVOLUTION CYCLE ───────────────────────────────────
@@ -643,3 +657,96 @@ class EvolutionAgent:
             return True
         except Exception:
             return False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Strategy 8 factory — PRE-VERIFY 임계값 자기 진화
+# ═══════════════════════════════════════════════════════════════════════════
+
+# 안전등급별 임계값 범위 (mutation 안전대)
+_PV_THRESHOLD_BOUNDS = {
+    "A": (1e-5, 1e-3),
+    "B": (-5e-5, 5e-4),
+    "C": (-5e-3, 1e-4),
+}
+
+_PV_MIN_SAMPLES = 5         # 이 값 미만이면 튜닝 skip
+_PV_LOW_ACCURACY = 0.6      # 이하면 tighten
+_PV_HIGH_ACCURACY = 0.85    # 이상이고 reject rate > 0 이면 loosen
+_PV_MIN_REJECT_RATE = 0.05  # loosen 조건
+
+
+def _make_preverify_tuner(engine):
+    """engine의 preverify_thresholds를 accuracy_history 기반으로 조정하는 전략 클로저.
+
+    낮은 sign_accuracy → 시뮬레이션 신뢰도가 낮음 → 임계값 상향(엄격)으로 위험 액션 차단
+    높은 sign_accuracy + 높은 reject rate → 임계값 하향(완화)으로 자율성 회복
+    """
+
+    def _tune_preverify(_conn, _metrics):
+        history = list(getattr(engine, "preverify_accuracy_history", []) or [])
+        recent = history[-20:]
+        if len(recent) < _PV_MIN_SAMPLES:
+            return {
+                "applied": False,
+                "detail": f"샘플 부족 ({len(recent)} < {_PV_MIN_SAMPLES})",
+            }
+
+        sign_matches = sum(1 for s in recent if s.get("sign_match"))
+        sign_accuracy = sign_matches / len(recent)
+        mae = sum(s.get("abs_error", 0) for s in recent) / len(recent)
+
+        counters = getattr(engine, "preverify_counters", {})
+        plans_total = counters.get("plans_total", 0) or 1
+        reject_rate = counters.get("auto_rejected_total", 0) / plans_total
+
+        thresholds = engine.preverify_thresholds
+        before = dict(thresholds)
+
+        direction = _decide_direction(sign_accuracy, reject_rate)
+        if direction == "tighten":
+            _tighten(thresholds)
+        elif direction == "loosen":
+            _loosen(thresholds)
+
+        changed = any(before[k] != thresholds[k] for k in thresholds)
+        return {
+            "applied": changed,
+            "detail": (
+                f"sign_acc={sign_accuracy:.2f}, mae={mae:.5f}, "
+                f"reject_rate={reject_rate:.2%} → {direction}"
+            ),
+            "direction": direction,
+            "before": before,
+            "after": dict(thresholds),
+            "sign_accuracy": round(sign_accuracy, 3),
+            "mae": round(mae, 6),
+            "samples": len(recent),
+        }
+
+    return _tune_preverify
+
+
+def _decide_direction(sign_accuracy: float, reject_rate: float) -> str:
+    if sign_accuracy < _PV_LOW_ACCURACY:
+        return "tighten"
+    if sign_accuracy > _PV_HIGH_ACCURACY and reject_rate > _PV_MIN_REJECT_RATE:
+        return "loosen"
+    return "hold"
+
+
+def _tighten(thresholds: dict) -> None:
+    """임계값을 상향 (엄격). 더 많은 auto-reject → HITL 부담 증가지만 안전."""
+    for level, (lo, hi) in _PV_THRESHOLD_BOUNDS.items():
+        cur = thresholds.get(level, 0.0)
+        # 양수 영역으로 10%씩 상향, 음수면 0에 가깝게
+        step = max(abs(cur) * 0.2, 1e-5)
+        thresholds[level] = min(cur + step, hi)
+
+
+def _loosen(thresholds: dict) -> None:
+    """임계값을 하향 (완화). 더 많은 자동 실행 → 자율성 회복."""
+    for level, (lo, hi) in _PV_THRESHOLD_BOUNDS.items():
+        cur = thresholds.get(level, 0.0)
+        step = max(abs(cur) * 0.2, 1e-5)
+        thresholds[level] = max(cur - step, lo)

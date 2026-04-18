@@ -150,11 +150,10 @@ class BacktestRunner:
         }
 
     def _would_preverify_reject(self, sim: dict, step_id: str) -> bool:
-        """preverify의 안전등급별 score 임계 적용."""
-        from v4.phases.preverify import _SCORE_THRESHOLD_BY_SAFETY
+        """preverify의 안전등급별 score 임계 적용 (런타임 또는 모듈 기본값)."""
+        from v4.phases.preverify import _get_score_threshold
         safety = self.engine._get_step_safety_level(step_id) if step_id else "C"
-        threshold = _SCORE_THRESHOLD_BY_SAFETY.get(safety, 0.0)
-        return sim["score"] < threshold
+        return sim["score"] < _get_score_threshold(self.engine, safety)
 
 
 # ── reconstruction helpers ────────────────────────────────
