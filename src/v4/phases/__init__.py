@@ -6,6 +6,6 @@
 Phase order: SCENARIO → SENSE → DETECT → DIAGNOSE → RECOVER → VERIFY → LEARN → PERIODIC
 """
 
-from v4.phases import sense, detect, diagnose, recover, verify, learn, periodic
+from v4.phases import sense, detect, diagnose, preverify, recover, verify, learn, periodic
 
-__all__ = ["sense", "detect", "diagnose", "recover", "verify", "learn", "periodic"]
+__all__ = ["sense", "detect", "diagnose", "preverify", "recover", "verify", "learn", "periodic"]

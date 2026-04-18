@@ -38,7 +38,7 @@ from v4.llm_orchestrator import LLMOrchestrator
 
 from v4._engine_hitl import HITLMixin
 from v4._engine_state import StateMixin
-from v4.phases import sense, detect, diagnose, recover, verify, learn, periodic
+from v4.phases import sense, detect, diagnose, preverify, recover, verify, learn, periodic
 
 
 class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
@@ -194,7 +194,8 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
                 return
 
             diag_out = await diagnose.run(self, it, delay, anomalies)
-            recover_out = await recover.run(self, it, delay, anomalies, diag_out["diagnoses"])
+            pv_out = await preverify.run(self, it, delay, anomalies, diag_out["diagnoses"])
+            recover_out = await recover.run(self, it, delay, pv_out["plans"])
             verify_out = await verify.run(
                 self, it, delay, recover_out["recovery_results"], anomalies,
             )

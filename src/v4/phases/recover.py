@@ -6,8 +6,11 @@ from datetime import datetime
 from v4.healing_agents import requires_hitl
 
 
-async def run(engine, it: int, delay: float, anomalies: list, diagnoses: list) -> dict:
-    """진단 → 복구 액션 실행. HITL 필요 시 큐에 적재.
+async def run(engine, it: int, delay: float, plans: list) -> dict:
+    """PRE-VERIFY로 선택된 액션을 실행. HITL 필요 시 큐에 적재.
+
+    Args:
+        plans: preverify.run() 결과 — 각 plan은 anomaly/diagnosis/ranked_actions/selected/rejected_reason
 
     Returns: {"recovery_results": [...]}
     """
@@ -19,8 +22,8 @@ async def run(engine, it: int, delay: float, anomalies: list, diagnoses: list) -
     await asyncio.sleep(delay)
 
     recovery_results = []
-    for diagnosis, anomaly in zip(diagnoses, anomalies):
-        rr = await _recover_one(engine, it, diagnosis, anomaly)
+    for plan in plans:
+        rr = await _recover_one(engine, it, plan)
         recovery_results.append(rr)
 
     await engine._emit("recover_done", {
@@ -32,15 +35,15 @@ async def run(engine, it: int, delay: float, anomalies: list, diagnoses: list) -
     return {"recovery_results": recovery_results}
 
 
-async def _recover_one(engine, it: int, diagnosis: dict, anomaly: dict) -> dict:
-    """단일 이상에 대한 복구 시도 — escalating risk + 백오프 재시도."""
+async def _recover_one(engine, it: int, plan: dict) -> dict:
+    """단일 이상에 대한 복구 시도 — pre-verify가 ranked한 순서로 시도."""
+    anomaly = plan["anomaly"]
+    diagnosis = plan["diagnosis"]
+    actions = plan["ranked_actions"]
+    preverify_rejected = plan.get("rejected_reason")
+
     step_id = anomaly.get("step_id")
     pre_yield_baseline = engine._get_step_yield(step_id)
-
-    try:
-        actions = engine.auto_recovery.plan_recovery(engine.conn, diagnosis, anomaly)
-    except Exception as exc:
-        return _error_result(anomaly, str(exc))
 
     if not actions:
         return {
@@ -52,7 +55,11 @@ async def _recover_one(engine, it: int, diagnosis: dict, anomaly: dict) -> dict:
             "detail": "복구 액션을 생성하지 못함",
         }
 
-    hitl_needed, hitl_reason = _check_hitl(engine, actions[0], diagnosis, step_id)
+    # pre-verify가 거절했으면 HITL 강제, 아니면 기존 정책 게이트 적용
+    if preverify_rejected:
+        hitl_needed, hitl_reason = True, preverify_rejected
+    else:
+        hitl_needed, hitl_reason = _check_hitl(engine, actions[0], diagnosis, step_id)
 
     recovery_success, executed_action, result, retries, recovery_time = \
         await _execute_actions(engine, it, step_id, actions, hitl_needed)
