@@ -17,7 +17,7 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 ASSETS = RESULTS / "ppt_assets"
 

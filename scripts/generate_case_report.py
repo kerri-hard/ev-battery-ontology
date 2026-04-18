@@ -2,7 +2,7 @@
 Generate detailed incident-recovery case analysis report.
 
 Usage:
-  python src/v4/generate_case_report.py
+  python scripts/generate_case_report.py
 """
 
 import json
@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 LATEST = RESULTS / "self_healing_v4_latest.json"
 OUT_MD = RESULTS / "self_healing_case_analysis.md"
