@@ -353,6 +353,43 @@ async def agent_route(body: dict):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/causal-discovery")
+async def get_causal_discovery():
+    """Auto-discovered causal relationships."""
+    if not engine.conn:
+        await engine.initialize()
+    if not hasattr(engine, 'causal_discovery') or not engine.causal_discovery:
+        return JSONResponse({"discovered": [], "total": 0})
+    return JSONResponse(engine.causal_discovery.get_status())
+
+
+@app.get("/api/evolution-status")
+async def get_evolution_status():
+    """EvolutionAgent strategy fitness and history."""
+    if not engine.conn:
+        await engine.initialize()
+    if not hasattr(engine, 'evolution_agent') or not engine.evolution_agent:
+        return JSONResponse({"strategies": [], "cycles": 0})
+    return JSONResponse(engine.evolution_agent.get_status())
+
+
+@app.get("/api/orchestrator/status")
+async def orchestrator_status():
+    """LLM Orchestrator status and config."""
+    if not hasattr(engine, 'llm_orchestrator') or not engine.llm_orchestrator:
+        return JSONResponse({"enabled": False, "provider": "none"})
+    return JSONResponse(engine.llm_orchestrator.get_status())
+
+
+@app.get("/api/orchestrator/audit")
+async def orchestrator_audit(limit: int = 50):
+    """LLM Orchestrator decision audit log."""
+    if not hasattr(engine, 'llm_orchestrator') or not engine.llm_orchestrator:
+        return JSONResponse({"items": []})
+    items = engine.llm_orchestrator.get_audit_log(limit=max(1, min(200, limit)))
+    return JSONResponse({"items": items})
+
+
 @app.get("/api/replay-eval")
 async def replay_eval():
     """Offline replay-style policy sweep."""

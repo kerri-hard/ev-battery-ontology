@@ -14,7 +14,6 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
-from v4.weibull_rul import WeibullRULEstimator
 
 
 class PredictiveAgent:
@@ -25,9 +24,6 @@ class PredictiveAgent:
       - ABB Ability: Bayesian Weibull update
       - NASA C-MAPSS: Transformer 기반 RUL (향후 Phase 3)
     """
-
-    def __init__(self):
-        self._weibull = WeibullRULEstimator()
 
     def rank_rul_risks(self, conn, limit: int = 5):
         rows = []
@@ -208,13 +204,6 @@ class PredictiveAgent:
             return round(variance, 4)
         except Exception:
             return 0.0
-
-    def rank_rul_weibull(self, conn, limit: int = 5) -> list[dict]:
-        """Weibull 생존분석 기반 RUL 추정 (업계 표준 방식).
-
-        기존 rank_rul_risks_v1(휴리스틱)보다 통계적으로 견고한 RUL을 제공한다.
-        """
-        return self._weibull.estimate(conn, limit=limit)
 
     @staticmethod
     def _priority(risk_score: float, rul_hours: float) -> str:

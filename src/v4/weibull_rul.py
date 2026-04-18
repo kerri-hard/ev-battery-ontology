@@ -114,6 +114,37 @@ def weibull_rul(current_age: float, k: float, lam: float,
 #  WEIBULL RUL ESTIMATOR
 # ═══════════════════════════════════════════════════════════════
 
+def extend_schema_rul_estimate(conn) -> None:
+    """RULEstimate 노드 및 HAS_RUL_ESTIMATE 관계를 스키마에 추가한다.
+
+    L4 의사결정 레이어 — 예지정비 추정 결과를 온톨로지에 영속화하여
+    AutoRecoveryAgent / HITL 정책이 RUL 기반 의사결정에 참조할 수 있게 한다.
+    동일 equipment_id에 대해 upsert (최신 추정만 유지).
+    """
+    statements = [
+        (
+            "CREATE NODE TABLE IF NOT EXISTS RULEstimate ("
+            "id STRING, equipment_id STRING, step_id STRING, "
+            "rul_hours_median DOUBLE, rul_hours_p90 DOUBLE, "
+            "risk_score DOUBLE, survival_probability DOUBLE, "
+            "priority STRING, method STRING, "
+            "weibull_k DOUBLE, weibull_lambda DOUBLE, "
+            "estimated_at STRING, "
+            "PRIMARY KEY(id))"
+        ),
+        (
+            "CREATE REL TABLE IF NOT EXISTS HAS_RUL_ESTIMATE ("
+            "FROM Equipment TO RULEstimate)"
+        ),
+    ]
+    for stmt in statements:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            # 이미 존재하거나 Kuzu 버전 차이 — 재시도하지 않음
+            pass
+
+
 class WeibullRULEstimator:
     """장비별 고장 이력 기반 Weibull RUL 추정.
 
@@ -133,6 +164,15 @@ class WeibullRULEstimator:
         "조립": {"k": 1.8, "lam": 4000.0},
     }
     DEFAULT_PRIOR = {"k": 1.5, "lam": 3000.0}
+
+    # 예지정비 우선순위 분류 테이블 (risk_score 상한, rul_hours 상한, 레이블)
+    # 위에서부터 순서대로 검사 — 첫 번째 매칭으로 확정
+    PRIORITY_THRESHOLDS = [
+        (0.75, 72.0, "P1-CRITICAL"),
+        (0.50, 168.0, "P2-HIGH"),
+        (0.30, 336.0, "P3-MEDIUM"),
+    ]
+    DEFAULT_PRIORITY = "P4-LOW"
 
     def estimate(self, conn, limit: int = 10) -> list[dict]:
         """전 장비에 대해 Weibull 기반 RUL을 추정한다."""
@@ -196,6 +236,78 @@ class WeibullRULEstimator:
 
         results.sort(key=lambda x: (-x["risk_score"], x["rul_hours_median"]))
         return results[:limit]
+
+    def sync_to_ontology(self, conn, results: list[dict]) -> dict:
+        """RUL 추정 결과를 RULEstimate 노드로 upsert한다.
+
+        기존 RULEstimate는 equipment_id 기준으로 교체 (최신만 유지).
+        RUL이 짧으면 MaintenancePlan 생성 트리거 가능 — 본 함수는 시그널만 반환.
+        """
+        upserted = 0
+        critical = []
+        now_iso = datetime.now().isoformat()
+        for rec in results:
+            eq_id = rec.get("equipment_id")
+            if not eq_id:
+                continue
+            est_id = f"RUL-{eq_id}"
+            try:
+                # 기존 RULEstimate 제거 (관계 포함)
+                conn.execute(
+                    "MATCH (eq:Equipment)-[r:HAS_RUL_ESTIMATE]->(re:RULEstimate) "
+                    "WHERE re.id=$id DELETE r",
+                    {"id": est_id},
+                )
+                conn.execute(
+                    "MATCH (re:RULEstimate) WHERE re.id=$id DELETE re",
+                    {"id": est_id},
+                )
+            except Exception:
+                pass
+            try:
+                conn.execute(
+                    "CREATE (re:RULEstimate {id:$id, equipment_id:$eq, step_id:$sid, "
+                    "rul_hours_median:$rm, rul_hours_p90:$rp, risk_score:$rs, "
+                    "survival_probability:$sp, priority:$pr, method:$mt, "
+                    "weibull_k:$wk, weibull_lambda:$wl, estimated_at:$ts})",
+                    {
+                        "id": est_id,
+                        "eq": eq_id,
+                        "sid": rec.get("step_id", ""),
+                        "rm": float(rec.get("rul_hours_median", 0.0)),
+                        "rp": float(rec.get("rul_hours_p90", 0.0)),
+                        "rs": float(rec.get("risk_score", 0.0)),
+                        "sp": float(rec.get("survival_probability", 1.0)),
+                        "pr": str(rec.get("priority", "P4-LOW")),
+                        "mt": str(rec.get("estimation_method", "unknown")),
+                        "wk": float(rec.get("weibull_k", 0.0)),
+                        "wl": float(rec.get("weibull_lambda", 0.0)),
+                        "ts": now_iso,
+                    },
+                )
+                conn.execute(
+                    "MATCH (eq:Equipment), (re:RULEstimate) "
+                    "WHERE eq.id=$eid AND re.id=$rid "
+                    "CREATE (eq)-[:HAS_RUL_ESTIMATE]->(re)",
+                    {"eid": eq_id, "rid": est_id},
+                )
+                upserted += 1
+                if rec.get("priority", "").startswith(("P1", "P2")):
+                    critical.append({
+                        "equipment_id": eq_id,
+                        "step_id": rec.get("step_id"),
+                        "priority": rec.get("priority"),
+                        "rul_hours_median": rec.get("rul_hours_median"),
+                        "risk_score": rec.get("risk_score"),
+                    })
+            except Exception:
+                # 스키마 불일치 등 — 상위에서 try/except로 감싸 있음
+                continue
+        return {
+            "upserted": upserted,
+            "critical_equipment": critical,
+            "estimated_at": now_iso,
+        }
 
     def _get_prior(self, eq_name: str) -> dict:
         """장비 이름에서 유형을 추출하여 사전 분포를 반환한다."""
@@ -291,12 +403,10 @@ class WeibullRULEstimator:
         # 고장 이력 없으면 MTBF의 30%로 추정 (보수적)
         return mtbf * 0.3
 
-    @staticmethod
-    def _priority(risk_score: float, rul_hours: float) -> str:
-        if risk_score >= 0.75 or rul_hours <= 72:
-            return "P1-CRITICAL"
-        if risk_score >= 0.5 or rul_hours <= 168:
-            return "P2-HIGH"
-        if risk_score >= 0.3 or rul_hours <= 336:
-            return "P3-MEDIUM"
-        return "P4-LOW"
+    @classmethod
+    def _priority(cls, risk_score: float, rul_hours: float) -> str:
+        """PRIORITY_THRESHOLDS 테이블의 첫 매칭 레이블을 반환한다."""
+        for risk_gate, rul_gate, label in cls.PRIORITY_THRESHOLDS:
+            if risk_score >= risk_gate or rul_hours <= rul_gate:
+                return label
+        return cls.DEFAULT_PRIORITY
