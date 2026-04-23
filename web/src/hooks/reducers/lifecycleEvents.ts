@@ -19,6 +19,7 @@ const stateSync: EventHandler = (state, data) => {
     healing: normalizeHealingFromState(data, state.healing),
     phase4: (data.phase4 as EngineState['phase4']) || state.phase4,
     preverify: mergePreverifyMetrics(state.preverify, data.preverify as Record<string, unknown> | undefined),
+    recurrence: (data.recurrence as EngineState['recurrence']) ?? state.recurrence,
     l3Snapshot: (data.l3_snapshot as Record<string, unknown>) || state.l3Snapshot,
     l3Trends: (data.l3_trends as Record<string, unknown>[]) || state.l3Trends,
     eventLog: addLog(state.eventLog, null, '서버 연결됨'),

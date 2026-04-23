@@ -212,6 +212,110 @@ SCENARIO_LIBRARY: list[dict[str, Any]] = [
     # ──────────────────────────────────────────────────────────
     # SCN-008: 전체 라인 환경 온도 상승 (environmental)
     # ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────
+    # SCN-009: 검사기 캘리브레이션 드리프트 (degradation, defect_mode_match)
+    # ──────────────────────────────────────────────────────────
+    {
+        "id": "SCN-009",
+        "name": "최종 검사기 캘리브레이션 드리프트",
+        "description": (
+            "EOL 검사기의 광학 모듈 캘리브레이션이 점진 드리프트하여 "
+            "두께/정렬 측정값이 미세하게 부정확해진다. INCREASE_INSPECTION 효과 큼."
+        ),
+        "category": "degradation",
+        "severity": "MEDIUM",
+        "affected_steps": [
+            {"step_id": "PS-505", "sensor": "alignment", "severity": 1, "delay_ticks": 0,
+             "degradation_ticks": 12},
+            {"step_id": "PS-506", "sensor": "vibration", "severity": 1, "delay_ticks": 4,
+             "degradation_ticks": 12},
+        ],
+        "root_cause": "defect_mode_match",
+        "expected_yield_impact": -0.008,
+    },
+
+    # ──────────────────────────────────────────────────────────
+    # SCN-010: 셀 공급사 LOT 품질 편차 (single, material_anomaly)
+    # ──────────────────────────────────────────────────────────
+    {
+        "id": "SCN-010",
+        "name": "셀 공급사 LOT 품질 편차",
+        "description": (
+            "신규 입고 셀 LOT의 두께가 사양 상한 근처에 분포. "
+            "스태킹 정렬과 셀 검사 단계에서 품질 변동. MATERIAL_SWITCH 효과 큼."
+        ),
+        "category": "single",
+        "severity": "HIGH",
+        "affected_steps": [
+            {"step_id": "PS-101", "sensor": "thickness", "severity": 3, "delay_ticks": 0},
+            {"step_id": "PS-102", "sensor": "alignment", "severity": 2, "delay_ticks": 1},
+        ],
+        "root_cause": "material_anomaly",
+        "expected_yield_impact": -0.014,
+    },
+
+    # ──────────────────────────────────────────────────────────
+    # SCN-011: 클린룸 파티클 증가 (environmental, yield_drop)
+    # ──────────────────────────────────────────────────────────
+    {
+        "id": "SCN-011",
+        "name": "클린룸 파티클 카운트 증가",
+        "description": (
+            "HEPA 필터 노화로 클린룸 내 0.5μm 파티클 카운트 상한 초과. "
+            "BMS 보드 솔더링과 코팅 표면 품질에 직접 영향."
+        ),
+        "category": "environmental",
+        "severity": "MEDIUM",
+        "affected_steps": [
+            {"step_id": "PS-201", "sensor": "humidity", "severity": 2, "delay_ticks": 0},
+            {"step_id": "PS-404", "sensor": "humidity", "severity": 2, "delay_ticks": 0},
+        ],
+        "root_cause": "yield_drop",
+        "expected_yield_impact": -0.012,
+    },
+
+    # ──────────────────────────────────────────────────────────
+    # SCN-012: 컨베이어 속도 편차 (degradation, process_variation)
+    # ──────────────────────────────────────────────────────────
+    {
+        "id": "SCN-012",
+        "name": "공정 컨베이어 속도 편차",
+        "description": (
+            "메인 컨베이어 모터 인버터 노이즈로 이송 속도가 ±5% 변동. "
+            "주요 가공 공정의 사이클 타임이 흔들리며 공정 변동 증가."
+        ),
+        "category": "degradation",
+        "severity": "LOW",
+        "affected_steps": [
+            {"step_id": "PS-105", "sensor": "speed", "severity": 1, "delay_ticks": 0,
+             "degradation_ticks": 8},
+            {"step_id": "PS-204", "sensor": "speed", "severity": 1, "delay_ticks": 2,
+             "degradation_ticks": 8},
+        ],
+        "root_cause": "process_variation",
+        "expected_yield_impact": -0.006,
+    },
+
+    # ──────────────────────────────────────────────────────────
+    # SCN-013: 공압 시스템 압력 누설 (cascading, pressure_drop)
+    # ──────────────────────────────────────────────────────────
+    {
+        "id": "SCN-013",
+        "name": "공압 시스템 압력 누설",
+        "description": (
+            "공장 메인 압축기 → 라인 분배기 사이 호스 누설로 공압 압력 강하. "
+            "크림핑 프레스와 클램핑 토크가 동시 영향."
+        ),
+        "category": "cascading",
+        "severity": "HIGH",
+        "affected_steps": [
+            {"step_id": "PS-203", "sensor": "pressure", "severity": 2, "delay_ticks": 0},
+            {"step_id": "PS-502", "sensor": "pressure", "severity": 2, "delay_ticks": 1},
+        ],
+        "root_cause": "pressure_drop",
+        "expected_yield_impact": -0.016,
+    },
+
     {
         "id": "SCN-008",
         "name": "전체 라인 환경 온도 상승",
@@ -280,6 +384,9 @@ class ScenarioEngine:
     - 환경 변동: 외부 요인(온도, 습도)에 의한 전체 영향
     """
 
+    # 같은 시나리오 재활성 차단 기간 (tick 단위). 다양성 강화 + 시각적 변화 유도.
+    COOLDOWN_TICKS = 8
+
     def __init__(self, sensor_sim: "SensorSimulator") -> None:
         """
         Parameters
@@ -299,6 +406,10 @@ class ScenarioEngine:
         self._library_index: dict[str, dict[str, Any]] = {
             s["id"]: s for s in SCENARIO_LIBRARY
         }
+
+        # scenario_id -> 마지막 종료/활성 tick 카운터 (cooldown용)
+        self._last_seen_tick: dict[str, int] = {}
+        self._tick_counter: int = 0
 
     # ── Public API ───────────────────────────────────────────
 
@@ -348,6 +459,8 @@ class ScenarioEngine:
                     active.degradation_progress[i] = 0  # 현재 진행도
 
         self._active[scenario_id] = active
+        # cooldown tracker 갱신 — 활성 시점 기록
+        self._last_seen_tick[scenario_id] = self._tick_counter
         return {
             "scenario_id": scenario_id,
             "name": scenario["name"],
@@ -359,17 +472,21 @@ class ScenarioEngine:
     def activate_random(self) -> dict[str, Any] | None:
         """무작위 시나리오 하나를 골라 활성화한다.
 
-        이미 모든 시나리오가 활성 상태이면 None 을 반환한다.
-
-        Returns
-        -------
-        dict or None
-            활성화된 시나리오 정보.
+        - 이미 활성 상태인 시나리오는 제외
+        - cooldown(COOLDOWN_TICKS) 안에 종료/시작된 시나리오는 제외 (다양성 강화)
+        - cooldown 통과 후보 없으면 cooldown 무시하고 무작위 선택 (fallback)
         """
+        in_cooldown = {
+            sid for sid, last in self._last_seen_tick.items()
+            if self._tick_counter - last < self.COOLDOWN_TICKS
+        }
         available = [
             sid for sid in self._library_index
-            if sid not in self._active
+            if sid not in self._active and sid not in in_cooldown
         ]
+        if not available:
+            # cooldown 모두 막혀있으면 cooldown 무시하고 활성 안 된 것 중에서 선택
+            available = [sid for sid in self._library_index if sid not in self._active]
         if not available:
             return None
 
@@ -392,6 +509,7 @@ class ScenarioEngine:
         """
         effects_this_tick: list[dict[str, Any]] = []
         completed_ids: list[str] = []
+        self._tick_counter += 1
 
         for scenario_id, active in self._active.items():
             scenario = active.scenario
@@ -486,6 +604,8 @@ class ScenarioEngine:
         # ── 완료된 시나리오를 이력으로 이동 ──
         for scenario_id in completed_ids:
             active = self._active.pop(scenario_id)
+            # cooldown tracker 갱신 — 종료 시점부터 cooldown 시작
+            self._last_seen_tick[scenario_id] = self._tick_counter
             self._history.append({
                 "scenario_id": scenario_id,
                 "name": active.scenario["name"],

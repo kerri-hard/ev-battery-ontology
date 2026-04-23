@@ -31,6 +31,7 @@ async def run(engine, it: int, delay: float, anomalies: list, diagnoses: list,
         if auto_recovered:
             auto_recovered_count += 1
 
+        _update_recurrence_tracker(engine, incident, auto_recovered)
         _persist_incident_node(engine, incident, auto_recovered)
         _link_failure_chain(engine, incident, diagnosis, anomaly)
         _link_escalation(engine, incident, rr)
@@ -145,6 +146,27 @@ def _record_incident(engine, it: int, anomaly: dict, diagnosis: dict,
     engine.healing_history.append(incident)
     engine.healing_counters["incident"] += 1
     return incident, auto_recovered
+
+
+def _update_recurrence_tracker(engine, incident: dict, auto_recovered: bool) -> None:
+    """anti-recurrence 정책의 데이터 소스. (step, anomaly_type, cause) 시그니처별로
+    occurrence count + 시도된 action_type + 마지막 자동복구 결과 누적.
+
+    PRE-VERIFY가 다음 사이클에 이 데이터를 보고 같은 cause 재발 시 다른 액션 강제.
+    """
+    sig = (
+        incident.get("step_id", "unknown"),
+        incident.get("anomaly_type", "unknown"),
+        incident.get("top_cause", "unknown"),
+    )
+    tracker = engine.recurrence_tracker.setdefault(
+        sig, {"count": 0, "tried_actions": set(), "last_success": False},
+    )
+    tracker["count"] += 1
+    action_type = incident.get("action_type")
+    if action_type and action_type not in ("ESCALATE", "none", "error"):
+        tracker["tried_actions"].add(action_type)
+    tracker["last_success"] = bool(auto_recovered)
 
 
 def _persist_incident_node(engine, incident: dict, auto_recovered: bool) -> None:

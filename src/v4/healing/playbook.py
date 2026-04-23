@@ -27,14 +27,20 @@ RECOVERY_PLAYBOOK = {
     "precision_loss": [
         {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.02, "risk": "MEDIUM"},
         {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.003, "risk": "LOW"},
+        {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+        {"action": "ESCALATE", "param": None, "adjustment": None, "risk": "CRITICAL"},
     ],
     "coating_defect": [
         {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.004, "risk": "LOW"},
         {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.015, "risk": "MEDIUM"},
+        {"action": "ESCALATE", "param": None, "adjustment": None, "risk": "CRITICAL"},
     ],
     "contact_failure": [
         {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.02, "risk": "MEDIUM"},
         {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.005, "risk": "LOW"},
+        {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+        {"action": "ESCALATE", "param": None, "adjustment": None, "risk": "CRITICAL"},
     ],
     "yield_drop": [
         {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.003, "risk": "LOW"},
@@ -53,10 +59,14 @@ RECOVERY_PLAYBOOK = {
     "welding_defect": [
         {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.005, "risk": "LOW"},
         {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+        {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.015, "risk": "MEDIUM"},
+        {"action": "ESCALATE", "param": None, "adjustment": None, "risk": "CRITICAL"},
     ],
     "joint_weakness": [
         {"action": "ADJUST_PARAMETER", "param": "yield_rate", "adjustment": 0.004, "risk": "LOW"},
         {"action": "INCREASE_INSPECTION", "param": None, "adjustment": None, "risk": "LOW"},
+        {"action": "MATERIAL_SWITCH", "param": None, "adjustment": None, "risk": "HIGH"},
+        {"action": "ESCALATE", "param": None, "adjustment": None, "risk": "CRITICAL"},
     ],
     "bearing_wear": [
         {"action": "EQUIPMENT_RESET", "param": "oee", "adjustment": 0.025, "risk": "MEDIUM"},

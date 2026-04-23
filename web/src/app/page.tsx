@@ -7,6 +7,8 @@ import Sidebar from '@/components/layout/Sidebar';
 import OntologyGraph from '@/components/graph/OntologyGraph';
 import IncidentAnalysis from '@/components/issues/IncidentAnalysis';
 import PreverifyPanel from '@/components/preverify/PreverifyPanel';
+import AutonomyHero from '@/components/autonomy/AutonomyHero';
+import RecurrencePanel from '@/components/autonomy/RecurrencePanel';
 import SparklineChart from '@/components/charts/SparklineChart';
 import Badge from '@/components/common/Badge';
 import { apiUrl } from '@/lib/api';
@@ -430,8 +432,10 @@ function Dashboard() {
                 delta={metrics && prevMetrics ? metrics.completeness_score - prevMetrics.completeness_score : null}
                 sparkData={metricsHistory.completeness} color="#f59e0b" />
               </div>
+              <AutonomyHero />
               <ResearchProgressPanel />
               <PreverifyPanel />
+              <RecurrencePanel />
               <PredictiveRiskPanel />
               <OrchestratorPanel />
               <RecoveryCasePanel />

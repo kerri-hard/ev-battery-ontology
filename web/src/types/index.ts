@@ -447,6 +447,23 @@ export interface EngineState {
   latestLLMSafetyGuard?: LLMSafetyGuardEvent;
   // L4 Tier 2: PRE-VERIFY phase (CDT decision validation)
   preverify?: PreverifyState;
+  // VISION 9.5 — anti-recurrence visibility
+  recurrence?: RecurrenceState;
+}
+
+export interface RecurrenceSignature {
+  step_id: string;
+  anomaly_type: string;
+  cause_type: string;
+  count: number;
+  tried_actions: string[];
+  last_success: boolean;
+}
+
+export interface RecurrenceState {
+  total_signatures: number;
+  repeating_count: number;
+  top_signatures: RecurrenceSignature[];
 }
 
 export interface PreverifySimulation {

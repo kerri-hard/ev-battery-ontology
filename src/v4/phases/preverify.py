@@ -29,6 +29,13 @@ _SCORE_THRESHOLD_BY_SAFETY = DEFAULT_SCORE_THRESHOLD_BY_SAFETY
 
 _COLD_START_ATTEMPTS = 2  # 이력 < 이 값이면 confidence를 success_prob로 사용
 
+# Anti-recurrence policy thresholds (VISION 9.5 — 실패에서 성장하는 시스템)
+_RECUR_DEMOTE_AT = 2   # 같은 (step, anomaly, cause)가 N회 이상 발생하면 시도된 액션 demote
+_RECUR_ESCALATE_AT = 3  # N회 이상 + 모든 후보 소진이면 ESCALATE 강제
+
+# Replay-based simulation — 과거 healing_history에서 같은 (step, action, cause) 결과로 예측
+_REPLAY_MIN_SAMPLES = 2   # 이 값 이상이면 replay, 미만이면 휴리스틱 fallback
+
 
 def _get_score_threshold(engine, safety_level: str) -> float:
     """engine.preverify_thresholds에서 우선 조회, 없으면 모듈 기본값."""
@@ -76,20 +83,25 @@ async def run(engine, it: int, delay: float, anomalies: list, diagnoses: list) -
 
 
 def _build_plan(engine, anomaly: dict, diagnosis: dict) -> dict:
-    """단일 anomaly에 대한 plan: 후보 생성 → 시뮬레이션 → 선택."""
+    """단일 anomaly에 대한 plan: 후보 생성 → anti-recurrence 필터 → 시뮬레이션 → 선택."""
     candidates = engine.auto_recovery.plan_recovery(engine.conn, diagnosis, anomaly)
-    simulations = [simulate_action(engine, a) for a in candidates[:3]]
 
     if not candidates:
+        return _empty_plan(anomaly, diagnosis)
+
+    # Anti-recurrence: same (step, anomaly, cause)가 반복되면 이미 시도된 액션 제외
+    candidates, recur_reason = _apply_anti_recurrence(engine, anomaly, diagnosis, candidates)
+    if recur_reason == "force_escalate":
         return {
             "anomaly": anomaly,
             "diagnosis": diagnosis,
-            "ranked_actions": [],
-            "simulations": [],
+            "ranked_actions": candidates,
+            "simulations": [simulate_action(engine, a) for a in candidates[:3]],
             "selected": None,
-            "rejected_reason": None,  # no candidates ≠ rejected; recover handles "none"
+            "rejected_reason": "anti_recurrence_force_escalate: 동일 (step,cause) 3회+, 모든 옵션 소진",
         }
 
+    simulations = [simulate_action(engine, a) for a in candidates[:3]]
     ranked = sorted(zip(candidates, simulations), key=lambda x: -x[1]["score"])
     ranked_actions = [a for a, _ in ranked]
     best_action, best_sim = ranked[0]
@@ -120,22 +132,80 @@ def _build_plan(engine, anomaly: dict, diagnosis: dict) -> dict:
     }
 
 
+def _empty_plan(anomaly: dict, diagnosis: dict) -> dict:
+    return {
+        "anomaly": anomaly,
+        "diagnosis": diagnosis,
+        "ranked_actions": [],
+        "simulations": [],
+        "selected": None,
+        "rejected_reason": None,
+    }
+
+
+def _apply_anti_recurrence(engine, anomaly: dict, diagnosis: dict, candidates: list) -> tuple[list, str]:
+    """반복되는 incident에 대해 이미 시도된 action_type을 후보에서 demote/배제.
+
+    반환: (수정된_candidates, reason). reason="force_escalate"이면 ESCALATE 강제.
+    """
+    tracker = getattr(engine, "recurrence_tracker", None)
+    if not tracker:
+        return candidates, ""
+
+    diag_top = (diagnosis.get("candidates") or [{}])[0]
+    sig = (
+        anomaly.get("step_id", "unknown"),
+        anomaly.get("anomaly_type", "unknown"),
+        diag_top.get("cause_type", "unknown"),
+    )
+    record = tracker.get(sig)
+    if not record or record["count"] < _RECUR_DEMOTE_AT:
+        return candidates, ""
+
+    tried = record["tried_actions"]
+    untried = [c for c in candidates if c.get("action_type") not in tried]
+
+    # N회 이상 + 시도 안 한 액션 없음 → ESCALATE 강제
+    if record["count"] >= _RECUR_ESCALATE_AT and not untried:
+        return candidates, "force_escalate"
+
+    # 시도된 액션은 뒤로 보내고 untried 우선 (있으면)
+    if untried:
+        demoted_tried = [c for c in candidates if c.get("action_type") in tried]
+        return untried + demoted_tried, "demoted"
+
+    return candidates, ""
+
+
 def simulate_action(engine, action: dict) -> dict:
     """액션을 적용하지 않고 기대 효과를 추정한다.
 
-    score = expected_delta × confidence × (1 − risk_factor)
-    expected_delta = (new_value − old_value) × success_prob
-    success_prob   = 과거 (action_type, cause_type) 성공률 (이력 부족 시 confidence)
+    Replay-based (≥2 샘플): 과거 healing_history에서 같은 (step, action, cause)
+    조합의 actual_delta 평균 사용. 실측치라 휴리스틱보다 신뢰도 높음.
+
+    Heuristic fallback: expected_delta = (new_value − old_value) × success_prob.
+
+    Final score: expected_delta × confidence × (1 − risk_factor).
     """
     action_type = action.get("action_type", "unknown")
     cause_type = action.get("cause_type", "unknown")
+    target_step = action.get("target_step", "")
     confidence = float(action.get("confidence", 0.0) or 0.0)
     risk_level = str(action.get("risk_level", "MEDIUM"))
     risk_factor = RISK_NUMERIC.get(risk_level, 0.5)
 
-    success_prob = _estimate_success_prob(engine, action_type, cause_type, confidence)
-    param_delta = _estimate_param_delta(action)
-    expected_delta = param_delta * success_prob
+    replay_mean, replay_n = _replay_predicted_delta(engine, target_step, action_type, cause_type)
+    if replay_n >= _REPLAY_MIN_SAMPLES:
+        expected_delta = replay_mean
+        success_prob = _estimate_success_prob(engine, action_type, cause_type, confidence)
+        param_delta = _estimate_param_delta(action)
+        sim_source = "replay"
+    else:
+        success_prob = _estimate_success_prob(engine, action_type, cause_type, confidence)
+        param_delta = _estimate_param_delta(action)
+        expected_delta = param_delta * success_prob
+        sim_source = "heuristic"
+
     score = expected_delta * confidence * (1.0 - risk_factor)
 
     return {
@@ -150,7 +220,30 @@ def simulate_action(engine, action: dict) -> dict:
         "confidence": confidence,
         "score": round(score, 6),
         "hist_attempts": _hist_attempts(engine, action_type, cause_type),
+        "sim_source": sim_source,
+        "replay_samples": replay_n,
     }
+
+
+def _replay_predicted_delta(engine, step_id: str, action_type: str, cause_type: str) -> tuple[float, int]:
+    """과거 healing_history에서 같은 (step, action, cause)의 actual yield delta 평균.
+
+    Returns: (mean_delta, sample_count). 샘플 없으면 (0.0, 0).
+    """
+    samples = []
+    for inc in getattr(engine, "healing_history", []) or []:
+        if (
+            inc.get("step_id") == step_id
+            and inc.get("action_type") == action_type
+            and inc.get("top_cause") == cause_type
+        ):
+            pre = inc.get("pre_yield")
+            post = inc.get("post_yield")
+            if isinstance(pre, (int, float)) and isinstance(post, (int, float)):
+                samples.append(float(post) - float(pre))
+    if not samples:
+        return 0.0, 0
+    return sum(samples) / len(samples), len(samples)
 
 
 def _estimate_success_prob(engine, action_type: str, cause_type: str, confidence: float) -> float:

@@ -86,6 +86,9 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
         self.preverify_accuracy_history: list = []
         self.preverify_counters = {"plans_total": 0, "auto_rejected_total": 0}
         self.preverify_thresholds = {"A": 1e-4, "B": 0.0, "C": -1e-3}
+        # Anti-recurrence — VISION 9.5: 같은 (step, anomaly, cause) 재발 시 다른 액션 강제
+        # tracker[(step, anomaly, cause)] = {count, tried_actions: set, last_success: bool}
+        self.recurrence_tracker: dict = {}
 
     # ── INIT ──────────────────────────────────────────────
 
@@ -176,6 +179,7 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
         self.preverify_accuracy_history = []
         self.preverify_counters = {"plans_total": 0, "auto_rejected_total": 0}
         self.preverify_thresholds = {"A": 1e-4, "B": 0.0, "C": -1e-3}
+        self.recurrence_tracker = {}
 
     def _load_persisted_policy(self):
         self._load_hitl_runtime_state()

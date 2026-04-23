@@ -43,6 +43,7 @@ class StateMixin:
             "event_bus": self.event_bus.get_stats() if self.event_bus else {},
         }
         state["preverify"] = self._preverify_state_block()
+        state["recurrence"] = self._recurrence_state_block()
         state["l3_trends"] = self.l3_trend_history[-30:]
         state["l3_snapshot"] = dict(self.latest_l3_snapshot) if self.latest_l3_snapshot else {}
         return state
@@ -72,6 +73,31 @@ class StateMixin:
             "auto_reject_rate": round(rejected_total / plans_total, 4) if plans_total else 0.0,
             "recent_predictions": recent[-10:],
             "current_thresholds": dict(getattr(self, "preverify_thresholds", {})),
+        }
+
+    def _recurrence_state_block(self) -> dict:
+        """Anti-recurrence tracker — VISION 9.5 가시화. 반복되는 incident signature top-N."""
+        tracker = getattr(self, "recurrence_tracker", {}) or {}
+        if not tracker:
+            return {"total_signatures": 0, "repeating_count": 0, "top_signatures": []}
+
+        items = []
+        for sig, rec in tracker.items():
+            step, anomaly_type, cause = sig
+            items.append({
+                "step_id": step,
+                "anomaly_type": anomaly_type,
+                "cause_type": cause,
+                "count": rec["count"],
+                "tried_actions": sorted(list(rec["tried_actions"])),
+                "last_success": rec["last_success"],
+            })
+        items.sort(key=lambda x: -x["count"])
+        repeating = sum(1 for r in items if r["count"] >= 2)
+        return {
+            "total_signatures": len(items),
+            "repeating_count": repeating,
+            "top_signatures": items[:8],
         }
 
     # ── L3 trend persistence ──────────────────────
