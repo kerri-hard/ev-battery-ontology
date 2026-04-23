@@ -22,3 +22,6 @@ results/*.json
 # IDE
 .idea/
 .vscode/
+
+# Claude Code local settings (개인 설정)
+.claude/settings.local.json
