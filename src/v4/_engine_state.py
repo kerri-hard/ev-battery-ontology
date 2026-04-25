@@ -171,6 +171,13 @@ class StateMixin:
                 "recent_incidents": self.healing_history[-20:],
                 "case_analyses": cases,
                 "recurrence_kpis": self._compute_recurrence_kpis(),
+                "preverify": self._preverify_state_block(),
+                "recurrence": self._recurrence_state_block(),
+                "phase4": {
+                    "evolution_agent": self.evolution_agent.get_status() if self.evolution_agent else {},
+                    "causal_discovery": self.causal_discovery.get_status() if self.causal_discovery else {},
+                    "llm_orchestrator": self.llm_orchestrator.get_status() if self.llm_orchestrator else {},
+                },
                 "hitl_pending": self.hitl_pending[-20:],
                 "hitl_audit": self.hitl_audit[-30:],
                 "hitl_policy": dict(self.hitl_policy),
