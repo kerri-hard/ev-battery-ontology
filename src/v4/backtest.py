@@ -23,7 +23,12 @@ from collections import defaultdict
 from datetime import datetime
 
 from v4.engine import SelfHealingEngine
-from v4.phases.preverify import simulate_action
+from v4.phases.preverify import simulate_action, _apply_anti_recurrence
+from v4.recurrence import (
+    RECUR_DEMOTE_AT,
+    incident_signature,
+    update_tracker as _shared_update_tracker,
+)
 
 
 _NUM_BINS = 10  # confidence calibration bins
@@ -52,6 +57,9 @@ class BacktestRunner:
 
         self.engine = SelfHealingEngine(db_path=self.db_path, results_dir=self.results_dir)
         await self.engine.initialize()
+        # Replay는 incident를 연대순으로 진행하면서 recurrence_tracker를
+        # 증분 업데이트한다 → anti-recurrence 정책이 production과 동일하게 적용됨.
+        self.engine.recurrence_tracker = {}
 
     async def replay(self) -> list:
         """각 incident에 대해 현재 모델의 결정을 기록한다."""
@@ -70,6 +78,9 @@ class BacktestRunner:
         usable = [r for r in self.replay_log if r.get("error") is None]
         decision_match = sum(1 for r in usable if r["decision_match"])
         preverify_rejects = sum(1 for r in usable if r["preverify_rejected"])
+        policy_switches = sum(1 for r in usable if r.get("policy_switched"))
+        force_escalates = sum(1 for r in usable if r.get("force_escalate"))
+        hist_demoted = sum(1 for r in usable if r.get("historical_demoted"))
 
         return {
             "snapshot": self.snapshot_path,
@@ -78,6 +89,9 @@ class BacktestRunner:
             "n_usable": len(usable),
             "decision_match_rate": _safe_div(decision_match, len(usable), 4),
             "preverify_reject_rate": _safe_div(preverify_rejects, len(usable), 4),
+            "policy_switch_rate": _safe_div(policy_switches, len(usable), 4),
+            "force_escalate_rate": _safe_div(force_escalates, len(usable), 4),
+            "historical_demoted_rate": _safe_div(hist_demoted, len(usable), 4),
             "confidence_brier": _brier_score(usable),
             "confidence_ece": _expected_calibration_error(usable),
             "per_action_breakdown": _per_action_breakdown(usable),
@@ -103,11 +117,20 @@ class BacktestRunner:
     def _replay_one(self, inc: dict) -> dict:
         anomaly = _reconstruct_anomaly(inc)
         diagnosis = _reconstruct_diagnosis(inc)
+        historical_action = inc.get("action_type")
+
+        # Snapshot tracker state BEFORE this incident — 후속 drift 분류에 사용.
+        sig = incident_signature(inc)
+        pre_record = self.engine.recurrence_tracker.get(sig)
+        pre_count = pre_record["count"] if pre_record else 0
+        pre_tried = set(pre_record["tried_actions"]) if pre_record else set()
+
         try:
             candidates = self.engine.auto_recovery.plan_recovery(
                 self.engine.conn, diagnosis, anomaly,
             )
         except Exception as exc:
+            self._update_tracker(inc)
             return {
                 "incident_id": inc.get("id"),
                 "step_id": inc.get("step_id"),
@@ -115,30 +138,55 @@ class BacktestRunner:
             }
 
         if not candidates:
+            self._update_tracker(inc)
             return {
                 "incident_id": inc.get("id"),
                 "step_id": inc.get("step_id"),
-                "historical_action": inc.get("action_type"),
+                "historical_action": historical_action,
                 "current_action": None,
                 "decision_match": False,
                 "preverify_rejected": False,
                 "current_confidence": 0.0,
                 "historical_success": bool(inc.get("auto_recovered", False)),
                 "best_score": None,
+                "policy_switched": False,
+                "force_escalate": False,
+                "historical_demoted": False,
                 "error": None,
             }
+
+        # Anti-recurrence 정책 적용 (production preverify와 동일).
+        original_top_action = candidates[0].get("action_type")
+        candidates, recur_reason = _apply_anti_recurrence(
+            self.engine, anomaly, diagnosis, candidates,
+        )
+        force_escalate = recur_reason == "force_escalate"
+        policy_switched = (
+            bool(candidates)
+            and candidates[0].get("action_type") != original_top_action
+        )
+        # Historical action이 반복에 의해 production에서도 demote됐을 상황:
+        # 이 incident 직전 tracker에서 동일 sig가 이미 RECUR_DEMOTE_AT회 이상 발생했고
+        # historical_action이 그때 tried 중에 있었다면, production flow에서도
+        # 동일하게 다른 액션으로 전환됐을 것 → "model drift"가 아니라 정책 수렴.
+        historical_demoted = (
+            pre_count >= RECUR_DEMOTE_AT
+            and historical_action in pre_tried
+        )
 
         # Simulate top candidate (preverify-style scoring)
         top_action = candidates[0]
         sim = simulate_action(self.engine, top_action)
         rejected = self._would_preverify_reject(sim, inc.get("step_id", ""))
 
+        self._update_tracker(inc)
+
         return {
             "incident_id": inc.get("id"),
             "step_id": inc.get("step_id"),
-            "historical_action": inc.get("action_type"),
+            "historical_action": historical_action,
             "current_action": top_action.get("action_type"),
-            "decision_match": top_action.get("action_type") == inc.get("action_type"),
+            "decision_match": top_action.get("action_type") == historical_action,
             "preverify_rejected": rejected,
             "current_confidence": top_action.get("confidence", 0.0),
             "historical_success": bool(inc.get("auto_recovered", False)),
@@ -146,8 +194,20 @@ class BacktestRunner:
             "expected_delta": sim["expected_delta"],
             "success_prob": sim["success_prob"],
             "candidate_count": len(candidates),
+            "policy_switched": policy_switched,
+            "force_escalate": force_escalate,
+            "historical_demoted": historical_demoted,
+            "signature_count_at_replay": pre_count,
             "error": None,
         }
+
+    def _update_tracker(self, inc: dict) -> None:
+        """learn 페이즈와 동일 로직 (v4.recurrence.update_tracker로 위임)."""
+        _shared_update_tracker(
+            self.engine.recurrence_tracker,
+            inc,
+            bool(inc.get("auto_recovered", False)),
+        )
 
     def _would_preverify_reject(self, sim: dict, step_id: str) -> bool:
         """preverify의 안전등급별 score 임계 적용 (런타임 또는 모듈 기본값)."""
@@ -248,15 +308,25 @@ def _per_action_breakdown(replays: list) -> dict:
 
 
 def _drift_warnings(replays: list) -> list:
-    """Notable regressions: action mismatch + previously successful incidents."""
+    """Genuine regressions only. 제외 대상:
+      - decision_match=True
+      - historical_success=False (실패했으니 재현되면 안 됨)
+      - policy_switched / force_escalate / historical_demoted: anti-recurrence가
+        historical action을 어차피 demote/override했을 상황 (VISION 9.5 정상 동작).
+    """
     warnings = []
     for r in replays:
-        if not r["decision_match"] and r["historical_success"]:
-            warnings.append(
-                f"INCIDENT {r.get('incident_id')} (step {r.get('step_id')}): "
-                f"historical {r.get('historical_action')} succeeded, "
-                f"current model would pick {r.get('current_action')}"
-            )
+        if r["decision_match"]:
+            continue
+        if not r["historical_success"]:
+            continue
+        if r.get("policy_switched") or r.get("force_escalate") or r.get("historical_demoted"):
+            continue
+        warnings.append(
+            f"INCIDENT {r.get('incident_id')} (step {r.get('step_id')}): "
+            f"historical {r.get('historical_action')} succeeded, "
+            f"current model would pick {r.get('current_action')}"
+        )
     return warnings[:20]  # cap
 
 

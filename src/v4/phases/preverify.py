@@ -14,6 +14,11 @@ VISION.md §6 Phase 5 "디지털 트윈 시뮬레이션 기반 의사결정" 의
 import asyncio
 
 from v4.healing import RISK_NUMERIC
+from v4.recurrence import (
+    RECUR_DEMOTE_AT as _RECUR_DEMOTE_AT,
+    RECUR_ESCALATE_AT as _RECUR_ESCALATE_AT,
+    incident_signature,
+)
 
 
 # 안전등급별 최소 selection_score 기본값 (engine.preverify_thresholds 미설정 시 폴백).
@@ -28,10 +33,6 @@ DEFAULT_SCORE_THRESHOLD_BY_SAFETY = {
 _SCORE_THRESHOLD_BY_SAFETY = DEFAULT_SCORE_THRESHOLD_BY_SAFETY
 
 _COLD_START_ATTEMPTS = 2  # 이력 < 이 값이면 confidence를 success_prob로 사용
-
-# Anti-recurrence policy thresholds (VISION 9.5 — 실패에서 성장하는 시스템)
-_RECUR_DEMOTE_AT = 2   # 같은 (step, anomaly, cause)가 N회 이상 발생하면 시도된 액션 demote
-_RECUR_ESCALATE_AT = 3  # N회 이상 + 모든 후보 소진이면 ESCALATE 강제
 
 # Replay-based simulation — 과거 healing_history에서 같은 (step, action, cause) 결과로 예측
 _REPLAY_MIN_SAMPLES = 2   # 이 값 이상이면 replay, 미만이면 휴리스틱 fallback
@@ -153,11 +154,12 @@ def _apply_anti_recurrence(engine, anomaly: dict, diagnosis: dict, candidates: l
         return candidates, ""
 
     diag_top = (diagnosis.get("candidates") or [{}])[0]
-    sig = (
-        anomaly.get("step_id", "unknown"),
-        anomaly.get("anomaly_type", "unknown"),
-        diag_top.get("cause_type", "unknown"),
-    )
+    # incident_signature와 동일 키 형식으로 tracker 조회 — production/replay 일관성.
+    sig = incident_signature({
+        "step_id": anomaly.get("step_id"),
+        "anomaly_type": anomaly.get("anomaly_type"),
+        "top_cause": diag_top.get("cause_type"),
+    })
     record = tracker.get(sig)
     if not record or record["count"] < _RECUR_DEMOTE_AT:
         return candidates, ""

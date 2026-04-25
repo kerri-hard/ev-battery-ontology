@@ -30,6 +30,9 @@ def _print_summary(report: dict) -> None:
     print(f"  N incidents:           {report['n_total']} (usable: {report['n_usable']})")
     print(f"  Decision match rate:   {report['decision_match_rate']:.1%}")
     print(f"  Pre-verify reject:     {report['preverify_reject_rate']:.1%}")
+    print(f"  Anti-recur switches:   {report.get('policy_switch_rate', 0):.1%}"
+          f"  (force_escalate: {report.get('force_escalate_rate', 0):.1%}, "
+          f"hist_demoted: {report.get('historical_demoted_rate', 0):.1%})")
     print(f"  Confidence Brier:      {report['confidence_brier']:.4f} (lower=better)")
     print(f"  Calibration ECE:       {report['confidence_ece']:.4f} (lower=better)")
     print()
