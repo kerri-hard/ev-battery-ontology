@@ -472,8 +472,10 @@ class EvolutionAgent:
         독립적인 직접 임팩트를 계산한다. 없으면 0을 반환한다.
         """
         if not result.get("applied", False):
-            # 실행 안 됨 — 부정 피드백은 최소화 (쿨다운은 fitness 누적으로 결정)
-            return -0.02
+            # 데이터 부족으로 적용되지 못한 전략은 중립(0). 이전 -0.02는 data-hungry
+            # 전략(causal_discovery 등)을 계속 끌어내려 mean fitness plateau를 만들었음.
+            # 실제 부진 전략은 쿨다운 로직이 별도로 처리하므로 여기서 페널티 불필요.
+            return 0.0
         detail = str(result.get("detail", ""))
         name = strategy.name
 
