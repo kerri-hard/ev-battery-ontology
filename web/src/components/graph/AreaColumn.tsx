@@ -8,10 +8,18 @@ interface Props {
   steps: StepData[];
   alarms: AlarmData[];
   flashSteps: Set<string>;
+  selectedStepId?: string | null;
   registerStepRef?: (stepId: string) => (el: HTMLDivElement | null) => void;
 }
 
-export function AreaColumn({ area, steps, alarms, flashSteps, registerStepRef }: Props) {
+export function AreaColumn({
+  area,
+  steps,
+  alarms,
+  flashSteps,
+  selectedStepId,
+  registerStepRef,
+}: Props) {
   const areaAlarms = alarms.filter((a) => steps.some((s) => s.id === a.step_id));
   const avgYield = steps.length > 0 ? steps.reduce((s, st) => s + st.yield, 0) / steps.length : 0;
 
@@ -60,6 +68,7 @@ export function AreaColumn({ area, steps, alarms, flashSteps, registerStepRef }:
               areaColor={area.color}
               alarm={alarms.find((a) => a.step_id === step.id)}
               isFlash={flashSteps.has(step.id)}
+              isSelected={selectedStepId === step.id}
               innerRef={registerStepRef ? registerStepRef(step.id) : undefined}
             />
           ))}

@@ -58,6 +58,7 @@ const initialState: EngineState = {
 type Action =
   | { type: 'SET_CONNECTED' }
   | { type: 'SET_DISCONNECTED' }
+  | { type: 'SELECT_INCIDENT'; id: string | null }
   | { type: 'WS_EVENT'; event: string; data: Record<string, unknown> };
 
 function reducer(state: EngineState, action: Action): EngineState {
@@ -66,6 +67,8 @@ function reducer(state: EngineState, action: Action): EngineState {
       return { ...state, connectionStatus: 'connected' };
     case 'SET_DISCONNECTED':
       return { ...state, connectionStatus: 'disconnected' };
+    case 'SELECT_INCIDENT':
+      return { ...state, selectedIncidentId: action.id };
     case 'WS_EVENT': {
       const handler = eventHandlers[action.event];
       return handler ? handler(state, action.data) : state;
@@ -117,5 +120,9 @@ export function useHarnessEngine() {
     }
   }, []);
 
-  return { state, sendCommand };
+  const selectIncident = useCallback((id: string | null) => {
+    dispatch({ type: 'SELECT_INCIDENT', id });
+  }, []);
+
+  return { state, sendCommand, selectIncident };
 }

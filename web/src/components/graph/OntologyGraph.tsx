@@ -63,6 +63,12 @@ function OntologyGraph({ className = '' }: { className?: string }) {
     steps: data.steps.filter((s) => s.area === area.id),
   }));
 
+  // 선택된 incident의 step_id를 찾아 강조 (Triptych 동기화)
+  const selectedIncident = state.selectedIncidentId
+    ? state.healing.recentIncidents.find((i) => i.id === state.selectedIncidentId)
+    : null;
+  const selectedStepId = selectedIncident?.step_id ?? null;
+
   return (
     <div className={`glass flex flex-col overflow-hidden relative ${className}`}>
       <SummaryBar
@@ -86,6 +92,7 @@ function OntologyGraph({ className = '' }: { className?: string }) {
               steps={areaSteps}
               alarms={data.alarms}
               flashSteps={flashSteps}
+              selectedStepId={selectedStepId}
               registerStepRef={positions.registerStepRef}
             />
           </div>

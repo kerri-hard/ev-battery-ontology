@@ -453,6 +453,8 @@ export interface EngineState {
   recurrence?: RecurrenceState;
   // SRE-style SLI/SLO per microservice (ProcessStep)
   slo?: SLOState;
+  // 사용자가 클릭한 incident ID — Triptych의 lane 동기화에 사용
+  selectedIncidentId?: string | null;
 }
 
 export interface RecurrenceSignature {

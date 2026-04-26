@@ -18,11 +18,12 @@ type PhaseStatus = 'pending' | 'success' | 'fail' | 'rejected';
 
 /** 실시간 incident 라이프사이클 — 7-페이즈 진행 상태 + 결과 */
 export default function IncidentFlowPanel() {
-  const { state } = useEngine();
+  const { state, selectIncident } = useEngine();
   const incidents = state.healing?.recentIncidents ?? [];
   const sorted = [...incidents]
     .sort((a, b) => (b.iteration ?? 0) - (a.iteration ?? 0))
     .slice(0, 12);
+  const selectedId = state.selectedIncidentId;
 
   return (
     <GlassCard className="p-3">
@@ -56,7 +57,15 @@ export default function IncidentFlowPanel() {
           </div>
         ) : (
           sorted.map((inc, idx) => (
-            <IncidentRow key={inc.id} incident={inc} fresh={idx < 3} />
+            <IncidentRow
+              key={inc.id}
+              incident={inc}
+              fresh={idx < 3}
+              selected={inc.id === selectedId}
+              onClick={() =>
+                selectIncident(inc.id === selectedId ? null : inc.id ?? null)
+              }
+            />
           ))
         )}
       </div>
@@ -64,16 +73,31 @@ export default function IncidentFlowPanel() {
   );
 }
 
-function IncidentRow({ incident, fresh }: { incident: HealingIncident; fresh: boolean }) {
+function IncidentRow({
+  incident,
+  fresh,
+  selected,
+  onClick,
+}: {
+  incident: HealingIncident;
+  fresh: boolean;
+  selected: boolean;
+  onClick: () => void;
+}) {
   const phases = inferPhaseStatuses(incident);
   const sevColor = severityColor(incident.severity);
   const time = parseTime(incident.timestamp);
 
+  const borderClass = selected
+    ? 'bg-cyan-500/15 border-l-2 border-cyan-300 ring-1 ring-cyan-400/40'
+    : fresh
+      ? 'bg-cyan-500/5 border-l-2 border-cyan-400/40'
+      : 'border-l-2 border-white/5 hover:bg-white/5';
+
   return (
-    <div
-      className={`grid grid-cols-[120px_1fr_55px] gap-1.5 items-center px-1.5 py-1 rounded text-[9px] ${
-        fresh ? 'bg-cyan-500/5 border-l-2 border-cyan-400/40' : 'border-l-2 border-white/5'
-      }`}
+    <button
+      onClick={onClick}
+      className={`grid w-full text-left grid-cols-[120px_1fr_55px] gap-1.5 items-center px-1.5 py-1 rounded text-[9px] cursor-pointer transition ${borderClass}`}
     >
       <div className="min-w-0">
         <div className="flex items-center gap-1">
@@ -99,7 +123,7 @@ function IncidentRow({ incident, fresh }: { incident: HealingIncident; fresh: bo
       <div className="text-right">
         <ResultBadge incident={incident} />
       </div>
-    </div>
+    </button>
   );
 }
 

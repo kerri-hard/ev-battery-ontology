@@ -7,6 +7,7 @@ import { useHarnessEngine } from '@/hooks/useHarnessEngine';
 interface EngineContextValue {
   state: EngineState;
   sendCommand: (cmd: WSCommand) => void;
+  selectIncident: (id: string | null) => void;
 }
 
 const EngineContext = createContext<EngineContextValue | null>(null);

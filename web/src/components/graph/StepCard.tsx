@@ -9,10 +9,11 @@ interface Props {
   areaColor: string;
   alarm?: AlarmData;
   isFlash: boolean;
+  isSelected?: boolean;
   innerRef?: (el: HTMLDivElement | null) => void;
 }
 
-export function StepCard({ step, areaColor, alarm, isFlash, innerRef }: Props) {
+export function StepCard({ step, areaColor, alarm, isFlash, isSelected, innerRef }: Props) {
   const [hovered, setHovered] = useState(false);
   const yc = yieldColor(step.yield);
   const auto = autoLabel(step.auto);
@@ -25,10 +26,15 @@ export function StepCard({ step, areaColor, alarm, isFlash, innerRef }: Props) {
       className={`relative rounded-lg transition-all duration-200 cursor-default
         ${isFlash ? 'animate-step-flash' : ''}
         ${alarm ? 'ring-1 ring-red-500/60' : ''}
+        ${isSelected ? 'ring-2 ring-cyan-300/80 shadow-[0_0_18px_rgba(34,211,238,0.45)]' : ''}
       `}
       style={{
-        background: hovered ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)',
-        borderLeft: `3px solid ${areaColor}`,
+        background: isSelected
+          ? 'rgba(34,211,238,0.10)'
+          : hovered
+            ? 'rgba(255,255,255,0.06)'
+            : 'rgba(255,255,255,0.02)',
+        borderLeft: `3px solid ${isSelected ? '#22d3ee' : areaColor}`,
         padding: '8px 10px',
       }}
     >
