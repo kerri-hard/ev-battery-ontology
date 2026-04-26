@@ -418,46 +418,42 @@ function Dashboard() {
           {/* KPI 리본 — 상단에 항상 노출 (SLO 상태 한눈) */}
           <SLOKpiRibbon />
 
-          {/* Triptych 본체 — 3-lane: Detect | Diagnose | Heal */}
-          <div className="flex-[5] min-h-[560px] grid grid-cols-12 gap-2">
+          {/* 메인: DIAGNOSE (온톨로지)가 가로/세로 모두 메인 — 우측에 DETECT + HEAL 세로 stack */}
+          <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-180px)]">
 
-            {/* DETECT lane (25%) — incident 흐름 + 클릭으로 선택 */}
-            <div className="col-span-3 flex flex-col gap-2 min-h-0">
-              <div className="text-[9px] font-bold text-cyan-300/80 uppercase tracking-widest px-2">
-                ① DETECT — 이상 감지
+            {/* ② DIAGNOSE — 메인 영역 (가로 75% + 세로 풀) */}
+            <div className="col-span-9 flex flex-col gap-1 min-h-0">
+              <div className="text-[10px] font-bold text-purple-300/80 uppercase tracking-widest px-2">
+                ② DIAGNOSE — 온톨로지 + 인과 추적 (메인)
               </div>
-              <div className="flex-1 overflow-auto">
-                <IncidentFlowPanel />
-              </div>
-              <div className="overflow-auto">
-                <AutonomyHero />
-              </div>
-            </div>
-
-            {/* DIAGNOSE lane (45%) — Ontology Graph (선택된 incident step 강조) */}
-            <div className="col-span-5 flex flex-col gap-2 min-h-0">
-              <div className="text-[9px] font-bold text-purple-300/80 uppercase tracking-widest px-2">
-                ② DIAGNOSE — 온톨로지 + 인과 추적
-              </div>
-              <div className="flex-1 min-h-0">
+              <div className="flex-1 min-h-[640px]">
                 <OntologyGraph className="h-full" />
               </div>
             </div>
 
-            {/* HEAL lane (30%) — 선택된 incident 풀스토리 + recurrence + preverify */}
-            <div className="col-span-4 flex flex-col gap-2 min-h-0">
-              <div className="text-[9px] font-bold text-emerald-300/80 uppercase tracking-widest px-2">
-                ③ HEAL — 복구 + 학습
+            {/* 우측 사이드: DETECT (위) + HEAL (아래) 세로 stack */}
+            <div className="col-span-3 flex flex-col gap-2 min-h-0">
+
+              {/* ① DETECT */}
+              <div className="flex flex-col gap-1 flex-1 min-h-[260px]">
+                <div className="text-[9px] font-bold text-cyan-300/80 uppercase tracking-widest px-2">
+                  ① DETECT — 이상 감지
+                </div>
+                <div className="flex-1 overflow-auto">
+                  <IncidentFlowPanel />
+                </div>
               </div>
-              <div className="flex-1 overflow-auto">
-                <SelectedIncidentCard />
+
+              {/* ③ HEAL */}
+              <div className="flex flex-col gap-1 flex-1 min-h-[300px]">
+                <div className="text-[9px] font-bold text-emerald-300/80 uppercase tracking-widest px-2">
+                  ③ HEAL — 복구 + 학습
+                </div>
+                <div className="flex-1 overflow-auto">
+                  <SelectedIncidentCard />
+                </div>
               </div>
-              <div className="overflow-auto">
-                <RecurrencePanel />
-              </div>
-              <div className="overflow-auto">
-                <PreverifyPanel />
-              </div>
+
             </div>
           </div>
 
@@ -495,16 +491,19 @@ function Dashboard() {
                   <MicroservicePanel />
                 </div>
                 <div className="col-span-3 flex flex-col gap-1.5">
+                  <AutonomyHero />
+                  <RecurrencePanel />
+                  <PreverifyPanel />
                   <ResearchProgressPanel />
+                </div>
+                <div className="col-span-3 flex flex-col gap-1.5">
                   <PredictiveRiskPanel />
                   <OrchestratorPanel />
                   <RecoveryCasePanel />
-                </div>
-                <div className="col-span-3 flex flex-col gap-1.5">
-                  <div className="glass overflow-hidden h-[260px]">
+                  <div className="glass overflow-hidden h-[200px]">
                     <IncidentAnalysis />
                   </div>
-                  <div className="glass overflow-hidden h-[260px]">
+                  <div className="glass overflow-hidden h-[200px]">
                     <EventLog />
                   </div>
                 </div>
