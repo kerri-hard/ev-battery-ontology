@@ -17,6 +17,7 @@ function OntologyGraph({ className = '' }: { className?: string }) {
   const positions = useStepPositions(data.steps.length);
 
   const [flashSteps, setFlashSteps] = useState<Set<string>>(new Set());
+  const [showL3Overlays, setShowL3Overlays] = useState<boolean>(false);
   const prevIter = useRef(0);
 
   // L3 trend WS sync
@@ -79,6 +80,19 @@ function OntologyGraph({ className = '' }: { className?: string }) {
         failureChains={data.failureChains}
       />
 
+      {/* L3 overlay 토글 — 기본 숨김 (graph 가독성 우선), 클릭 시 표시 */}
+      <button
+        onClick={() => setShowL3Overlays(!showL3Overlays)}
+        className={`absolute top-2 right-2 z-30 px-2 py-1 text-[9px] font-mono rounded border transition ${
+          showL3Overlays
+            ? 'bg-cyan-500/30 border-cyan-300/50 text-cyan-100'
+            : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+        }`}
+        title="L3 인과 추적 패널 토글"
+      >
+        L3 INSIGHTS {showL3Overlays ? '▾' : '▸'}
+      </button>
+
       <div
         ref={positions.graphBodyRef}
         className="flex-1 grid grid-cols-5 gap-2 p-2 min-h-0 overflow-hidden relative"
@@ -98,9 +112,13 @@ function OntologyGraph({ className = '' }: { className?: string }) {
           </div>
         ))}
 
-        <L3RelationOverlay edges={data.edges} nodes={data.nodes} />
-        <L3TrendPanel history={data.l3Trend} />
-        <L3InsightsPanel causalRules={data.causalRules} failureChains={data.failureChains} />
+        {showL3Overlays && (
+          <>
+            <L3RelationOverlay edges={data.edges} nodes={data.nodes} />
+            <L3TrendPanel history={data.l3Trend} />
+            <L3InsightsPanel causalRules={data.causalRules} failureChains={data.failureChains} />
+          </>
+        )}
       </div>
     </div>
   );
