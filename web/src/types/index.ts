@@ -243,6 +243,7 @@ export interface MetricsHistory {
 
 export interface HealingIncident {
   id?: string;
+  iteration?: number;
   step_id: string;
   cause?: string;
   action?: string;
@@ -267,6 +268,7 @@ export interface HealingIncident {
   hitl_required?: boolean;
   hitl_id?: string;
   escalation_reason?: string | null;
+  recovery_time_sec?: number;
   improved?: boolean;
   pre_yield?: number;
   post_yield?: number;
@@ -449,6 +451,8 @@ export interface EngineState {
   preverify?: PreverifyState;
   // VISION 9.5 — anti-recurrence visibility
   recurrence?: RecurrenceState;
+  // SRE-style SLI/SLO per microservice (ProcessStep)
+  slo?: SLOState;
 }
 
 export interface RecurrenceSignature {
@@ -501,6 +505,69 @@ export interface PreverifyState {
   plans_total: number;
   auto_reject_rate: number;
   current_thresholds: Record<string, number>;
+}
+
+// ── SLO / SLI ──
+
+export interface SLODefinition {
+  name: string;
+  description: string;
+  data_source: string;
+  target: number;
+  higher_is_better: boolean;
+  unit: string;
+}
+
+export interface SLOGlobalSLI {
+  auto_recovery_rate: number;
+  p95_recovery_latency: number;
+  p50_recovery_latency: number;
+  yield_compliance: number;
+  hitl_rate: number;
+  repeat_rate: number;
+  total_incidents: number;
+  total_auto_recovered: number;
+}
+
+export interface MicroserviceSLI {
+  step_id: string;
+  area_id: string;
+  incident_count: number;
+  auto_recovery_rate: number;
+  hitl_rate: number;
+  improvement_rate: number;
+  p50_recovery_sec: number;
+  p95_recovery_sec: number;
+  current_yield: number;
+  yield_meets_slo: boolean;
+  severity_dist: Record<string, number>;
+  error_budget_remaining: number;
+}
+
+export interface AreaSLI {
+  area_id: string;
+  step_count: number;
+  total_incidents: number;
+  auto_recovery_rate: number;
+  hitl_rate: number;
+  yield_compliance_rate: number;
+}
+
+export interface SLOViolation {
+  sli: string;
+  name: string;
+  current: number;
+  target: number;
+  delta: number;
+  affected_steps: string[];
+}
+
+export interface SLOState {
+  definitions: Record<string, SLODefinition>;
+  global: SLOGlobalSLI;
+  per_step: MicroserviceSLI[];
+  per_area: AreaSLI[];
+  violations: SLOViolation[];
 }
 
 // ── WS Command ──

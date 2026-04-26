@@ -6,6 +6,20 @@ from datetime import datetime
 from v4.healing_agents import RISK_NUMERIC
 
 
+def _percentile(values: list, pct: float) -> float:
+    """단순 percentile (numpy 의존성 없이). 빈 리스트면 0."""
+    if not values:
+        return 0.0
+    s = sorted(values)
+    k = (len(s) - 1) * (pct / 100.0)
+    lo = int(k)
+    hi = min(lo + 1, len(s) - 1)
+    if lo == hi:
+        return s[lo]
+    frac = k - lo
+    return s[lo] * (1 - frac) + s[hi] * frac
+
+
 class StateMixin:
     """엔진 상태 집계, 영속화, 운영 메트릭 산출."""
 
@@ -44,6 +58,7 @@ class StateMixin:
         }
         state["preverify"] = self._preverify_state_block()
         state["recurrence"] = self._recurrence_state_block()
+        state["slo"] = self._slo_state_block()
         state["l3_trends"] = self.l3_trend_history[-30:]
         state["l3_snapshot"] = dict(self.latest_l3_snapshot) if self.latest_l3_snapshot else {}
         return state
@@ -74,6 +89,214 @@ class StateMixin:
             "recent_predictions": recent[-10:],
             "current_thresholds": dict(getattr(self, "preverify_thresholds", {})),
         }
+
+    # ── SLO/SLI ─────────────────────────────────
+    # SRE 스타일: 각 ProcessStep을 microservice로 보고 incidents → SLI 집계.
+    # SLO 미달 시 error budget burn 가시화.
+
+    # SLI 정의 + SLO 목표값 (display + 계산 동시에 사용)
+    SLO_TARGETS = {
+        "auto_recovery_rate": {
+            "name": "자동 복구 성공률",
+            "description": "auto_recovered / total_incidents",
+            "data_source": "healing_history.auto_recovered",
+            "target": 0.95,
+            "higher_is_better": True,
+            "unit": "ratio",
+        },
+        "p95_recovery_latency": {
+            "name": "복구 지연 p95",
+            "description": "recovery_time_sec 95퍼센타일 (sim time)",
+            "data_source": "healing_history.recovery_time_sec",
+            "target": 0.05,
+            "higher_is_better": False,
+            "unit": "sec",
+        },
+        "yield_compliance": {
+            "name": "수율 준수율",
+            "description": "yield_rate ≥ 0.99 인 step 비율",
+            "data_source": "ProcessStep.yield_rate",
+            "target": 0.95,
+            "higher_is_better": True,
+            "unit": "ratio",
+        },
+        "hitl_rate": {
+            "name": "HITL 에스컬레이션율",
+            "description": "hitl_required / total_incidents",
+            "data_source": "healing_history.hitl_required",
+            "target": 0.05,
+            "higher_is_better": False,
+            "unit": "ratio",
+        },
+        "repeat_rate": {
+            "name": "재발률 (학습 SLI)",
+            "description": "동일 시그니처 재발 incidents / total",
+            "data_source": "recurrence_kpis.repeat_incident_rate",
+            "target": 0.25,
+            "higher_is_better": False,
+            "unit": "ratio",
+        },
+    }
+
+    def _slo_state_block(self) -> dict:
+        """incidents 집계 → step/area별 SLI + global SLO + error budget."""
+        incidents = self.healing_history
+        per_step = self._compute_per_step_sli(incidents)
+        per_area = self._compute_per_area_sli(per_step)
+        global_sli = self._compute_global_sli(incidents)
+        violations = self._compute_slo_violations(global_sli, per_step)
+        return {
+            "definitions": self.SLO_TARGETS,
+            "global": global_sli,
+            "per_step": per_step,
+            "per_area": per_area,
+            "violations": violations,
+        }
+
+    def _compute_per_step_sli(self, incidents: list) -> list:
+        """step_id별로 incidents 그룹핑 후 SLI 계산."""
+        from collections import defaultdict
+        bucket = defaultdict(list)
+        for inc in incidents:
+            sid = inc.get("step_id")
+            if sid:
+                bucket[sid].append(inc)
+
+        out = []
+        for step_id, sub in bucket.items():
+            n = len(sub)
+            auto = sum(1 for x in sub if x.get("auto_recovered"))
+            hitl = sum(1 for x in sub if x.get("hitl_required"))
+            improved = sum(1 for x in sub if x.get("improved"))
+            times = [float(x.get("recovery_time_sec") or 0.0) for x in sub if x.get("recovery_time_sec") is not None]
+            sevs = [x.get("severity") for x in sub if x.get("severity")]
+
+            current_yield = self._get_step_yield(step_id) or 0.0
+            area_id = self._get_step_area(step_id)
+
+            out.append({
+                "step_id": step_id,
+                "area_id": area_id,
+                "incident_count": n,
+                "auto_recovery_rate": round(auto / n, 4) if n else 0.0,
+                "hitl_rate": round(hitl / n, 4) if n else 0.0,
+                "improvement_rate": round(improved / n, 4) if n else 0.0,
+                "p50_recovery_sec": round(_percentile(times, 50), 4) if times else 0.0,
+                "p95_recovery_sec": round(_percentile(times, 95), 4) if times else 0.0,
+                "current_yield": round(current_yield, 4),
+                "yield_meets_slo": current_yield >= 0.99,
+                "severity_dist": {s: sevs.count(s) for s in set(sevs)},
+                "error_budget_remaining": round(
+                    max(0.0, 1.0 - (auto / n if n else 0.0) - (1.0 - 0.95)), 4
+                ),
+            })
+        out.sort(key=lambda x: -x["incident_count"])
+        return out
+
+    def _compute_per_area_sli(self, per_step: list) -> list:
+        """ProcessArea별 SLI roll-up (step들의 가중 평균)."""
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for s in per_step:
+            aid = s.get("area_id")
+            if aid:
+                groups[aid].append(s)
+        out = []
+        for area_id, steps in groups.items():
+            total_inc = sum(s["incident_count"] for s in steps)
+            if total_inc == 0:
+                continue
+            auto_weighted = sum(s["auto_recovery_rate"] * s["incident_count"] for s in steps) / total_inc
+            hitl_weighted = sum(s["hitl_rate"] * s["incident_count"] for s in steps) / total_inc
+            yield_meets = sum(1 for s in steps if s["yield_meets_slo"]) / len(steps)
+            out.append({
+                "area_id": area_id,
+                "step_count": len(steps),
+                "total_incidents": total_inc,
+                "auto_recovery_rate": round(auto_weighted, 4),
+                "hitl_rate": round(hitl_weighted, 4),
+                "yield_compliance_rate": round(yield_meets, 4),
+            })
+        out.sort(key=lambda x: x["area_id"])
+        return out
+
+    def _compute_global_sli(self, incidents: list) -> dict:
+        """전체 시스템 SLI — 단일 microservice 집합으로서의 platform SLI."""
+        n = len(incidents)
+        if n == 0:
+            return {sli: 0.0 for sli in self.SLO_TARGETS}
+
+        auto = sum(1 for x in incidents if x.get("auto_recovered"))
+        hitl = sum(1 for x in incidents if x.get("hitl_required"))
+        times = [float(x.get("recovery_time_sec") or 0.0) for x in incidents if x.get("recovery_time_sec") is not None]
+        kpis = self._compute_recurrence_kpis()
+
+        # yield_compliance: 전체 step 중 yield ≥ 0.99 비율
+        yield_meets = 0
+        total_steps = 0
+        try:
+            r = self.conn.execute("MATCH (ps:ProcessStep) RETURN ps.yield_rate")
+            while r.has_next():
+                yield_rate = r.get_next()[0]
+                if yield_rate is not None:
+                    total_steps += 1
+                    if float(yield_rate) >= 0.99:
+                        yield_meets += 1
+        except Exception:
+            pass
+
+        return {
+            "auto_recovery_rate": round(auto / n, 4),
+            "p95_recovery_latency": round(_percentile(times, 95), 4) if times else 0.0,
+            "p50_recovery_latency": round(_percentile(times, 50), 4) if times else 0.0,
+            "yield_compliance": round(yield_meets / max(total_steps, 1), 4),
+            "hitl_rate": round(hitl / n, 4),
+            "repeat_rate": float(kpis.get("repeat_incident_rate", 0.0)),
+            "total_incidents": n,
+            "total_auto_recovered": auto,
+        }
+
+    def _compute_slo_violations(self, global_sli: dict, per_step: list) -> list:
+        """SLO 미달 항목 + 영향받는 step 리스트."""
+        violations = []
+        for sli_key, spec in self.SLO_TARGETS.items():
+            if sli_key not in global_sli:
+                continue
+            current = global_sli[sli_key]
+            target = spec["target"]
+            ok = current >= target if spec["higher_is_better"] else current <= target
+            if ok:
+                continue
+            # 영향 step (per_step에 해당 SLI 가시화 가능 시)
+            affected_steps = []
+            if sli_key == "auto_recovery_rate":
+                affected_steps = [s["step_id"] for s in per_step if s["auto_recovery_rate"] < target][:5]
+            elif sli_key == "hitl_rate":
+                affected_steps = [s["step_id"] for s in per_step if s["hitl_rate"] > target][:5]
+            elif sli_key == "yield_compliance":
+                affected_steps = [s["step_id"] for s in per_step if not s["yield_meets_slo"]][:5]
+            violations.append({
+                "sli": sli_key,
+                "name": spec["name"],
+                "current": current,
+                "target": target,
+                "delta": round(current - target, 4),
+                "affected_steps": affected_steps,
+            })
+        return violations
+
+    def _get_step_area(self, step_id: str) -> str:
+        try:
+            r = self.conn.execute(
+                "MATCH (ps:ProcessStep)-[:BELONGS_TO]->(pa:ProcessArea) "
+                "WHERE ps.id=$id RETURN pa.id LIMIT 1",
+                {"id": step_id},
+            )
+            if r.has_next():
+                return r.get_next()[0] or ""
+        except Exception:
+            pass
+        return ""
 
     def _recurrence_state_block(self) -> dict:
         """Anti-recurrence tracker — VISION 9.5 가시화. 반복되는 incident signature top-N."""
@@ -173,6 +396,7 @@ class StateMixin:
                 "recurrence_kpis": self._compute_recurrence_kpis(),
                 "preverify": self._preverify_state_block(),
                 "recurrence": self._recurrence_state_block(),
+                "slo": self._slo_state_block(),
                 "phase4": {
                     "evolution_agent": self.evolution_agent.get_status() if self.evolution_agent else {},
                     "causal_discovery": self.causal_discovery.get_status() if self.causal_discovery else {},

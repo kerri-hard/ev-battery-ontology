@@ -9,6 +9,9 @@ import IncidentAnalysis from '@/components/issues/IncidentAnalysis';
 import PreverifyPanel from '@/components/preverify/PreverifyPanel';
 import AutonomyHero from '@/components/autonomy/AutonomyHero';
 import RecurrencePanel from '@/components/autonomy/RecurrencePanel';
+import SLODefinitions from '@/components/slo/SLODefinitions';
+import MicroservicePanel from '@/components/slo/MicroservicePanel';
+import IncidentFlowPanel from '@/components/slo/IncidentFlowPanel';
 import SparklineChart from '@/components/charts/SparklineChart';
 import Badge from '@/components/common/Badge';
 import { apiUrl } from '@/lib/api';
@@ -408,9 +411,22 @@ function Dashboard() {
         {/* Main area */}
         <main className="flex-1 flex flex-col gap-2 p-2 overflow-auto min-h-0">
 
-          {/* Top: Ontology Graph — takes majority of space */}
-          <div className="flex-[5] min-h-[520px]">
+          {/* Top: Ontology Graph */}
+          <div className="flex-[4] min-h-[440px]">
             <OntologyGraph className="h-full" />
+          </div>
+
+          {/* SLO/SLI row — SRE-style microservice view + real-time incident flow */}
+          <div className="flex-[3] min-h-[460px] grid grid-cols-12 gap-2">
+            <div className="col-span-3 overflow-auto">
+              <SLODefinitions />
+            </div>
+            <div className="col-span-5 overflow-auto">
+              <MicroservicePanel />
+            </div>
+            <div className="col-span-4 overflow-auto">
+              <IncidentFlowPanel />
+            </div>
           </div>
 
           {/* Bottom: 3-column info bar */}
