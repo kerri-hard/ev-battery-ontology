@@ -34,6 +34,12 @@ _SCORE_THRESHOLD_BY_SAFETY = DEFAULT_SCORE_THRESHOLD_BY_SAFETY
 
 _COLD_START_ATTEMPTS = 2  # 이력 < 이 값이면 confidence를 success_prob로 사용
 
+# Cold-start에서 non-yield param adjustment를 yield-equivalent로 환산하는 비율.
+# verify.py는 yield_rate만 측정하므로 OEE 같은 leading indicator는 직접 yield를
+# 올리지 않음. 경험적으로 OEE 1% ≈ yield 0.1% 영향 → 0.1 사용.
+# replay 경로(replay_n ≥ 2)는 실측 yield delta를 쓰므로 이 환산 불필요.
+_NON_YIELD_PARAM_DISCOUNT = 0.1
+
 # Replay-based simulation — 과거 healing_history에서 같은 (step, action, cause) 결과로 예측
 _REPLAY_MIN_SAMPLES = 2   # 이 값 이상이면 replay, 미만이면 휴리스틱 fallback
 
@@ -268,19 +274,23 @@ def _hist_attempts(engine, action_type: str, cause_type: str) -> int:
 
 
 def _estimate_param_delta(action: dict) -> float:
-    """액션이 만들 파라미터 변화량 (yield_rate / oee delta).
+    """액션이 만들 파라미터 변화량 (yield-equivalent scale).
 
     plan_recovery에서 이미 new_value/old_value 채워줌. 없으면 0.
     Non-numeric 액션(INCREASE_INSPECTION/MATERIAL_SWITCH/ESCALATE)은 0.
+    Non-yield param(OEE 등)은 leading indicator라 yield 직접 영향이 작음 → 환산.
     """
     new_value = action.get("new_value")
     old_value = action.get("old_value")
     if new_value is None or old_value is None:
         return 0.0
     try:
-        return float(new_value) - float(old_value)
+        delta = float(new_value) - float(old_value)
     except (TypeError, ValueError):
         return 0.0
+    if action.get("parameter") != "yield_rate":
+        delta *= _NON_YIELD_PARAM_DISCOUNT
+    return delta
 
 
 def _serialize_plan(plan: dict) -> dict:
