@@ -4,7 +4,7 @@
 
 제조공정 온톨로지 + AIOps로 **문제 감지 → 자동 진단 → PRE-VERIFY → 자동 복구 → 학습**하는 자율 제조 시스템(다크 팩토리) 플랫폼.
 
-**현재 단계: L3 자율 공장 + L4 Tier 2** — 자동 인과 발견·자가 진화·LLM 오케스트레이션·CDT 시뮬레이션·예측 정확도 자기 보정 구현됨.
+**현재 단계: L3 자율 공장 + L4 Tier 2 + 운영자 워크벤치 완성** — 자동 인과 발견·자가 진화·LLM 오케스트레이션·CDT 시뮬레이션·Multi-step PRE-VERIFY·Counterfactual replay·HITL inline action·Sim Control·Toast 알림·CausalChainTracer 모두 구현됨.
 
 **참조 문서**:
 - [`VISION.md`](VISION.md) — 다크 팩토리 방향성, 5단계 로드맵, 9가지 설계 철학
@@ -283,16 +283,43 @@ code-reviewer / silent-failure-hunter / code-simplifier / type-design-analyzer 4
 
 ## 다크 팩토리 로드맵
 
-현재: **L3 자율 공장 + L4 Tier 2** — `ARCHITECTURE.md` §17, `VISION.md` §6 참조.
+현재: **L3 자율 공장 + L4 Tier 2 + 운영자 워크벤치** — `ARCHITECTURE.md` §17, `VISION.md` §6 참조.
 
-### 미구현 / 다음 사이클 후보 (`ARCHITECTURE.md` §18)
-1. **Backtest CI gate (높음)**: GitHub Actions PR 게이트 자동화
-2. **Multi-step PRE-VERIFY (중간)**: 단일 액션 → 액션 시퀀스 lookahead
-3. **Counterfactual replay (중간)**: "안 했다면?" 가상 yield 추정
-4. **Threshold sparkline (낮음)**: 안전등급별 임계값 진화 시각화
-5. **Real OPC-UA (중간)**: SimulatedBridge → asyncua.Client + Sparkplug B
-6. **Transformer RUL (낮음)**: Weibull → LSTM/Transformer (라벨 데이터 확보 후)
-7. **NL-to-Cypher 진단**: LLMOrchestrator scaffolding 완료, 가드레일 추가 필요
+### 완료된 항목 (이전 §18 미구현 후보 → 본 세션 누적)
+1. ✅ **Backtest CI gate** (`.github/workflows/backtest.yml` + `scripts/backtest_ci_guard.py`) — 4 임계값 (decision_match/Brier/ECE/drift) 자동 차단
+2. ✅ **Multi-step PRE-VERIFY** (`src/v4/phases/preverify.py:simulate_action_sequence`) — Markov 가정 액션 시퀀스 시뮬, cumulative_success_prob/expected_delta_total 노출
+3. ✅ **Counterfactual replay** (`src/v4/backtest.py:_compute_counterfactuals`) — action_value = chosen − baseline yield delta
+4. ✅ **Threshold sparkline** — `preverify_thresholds_history` (60 iter ring) + PreverifyPanel SVG sparkline 3색
+5. 🟡 **OPC-UA bridge** (`src/v4/protocol_bridge.py:OPCUABridge`) — asyncua sync 클라이언트 + node_ids 매핑 + graceful fallback (실 서버 없이도 동작 가능, 통합 테스트는 별도)
+6. ✅ **Sim Control + ScenarioPicker** (`web/src/components/scenarios/ScenarioPicker.tsx`) — 20 시나리오 dropdown + severity 필터 + weighted random 활성화 카운트 가시화
+7. ✅ **CausalChainTracer** (`web/src/components/learning/CausalChainTracer.tsx`) — multi-hop 인과 chain 자동 추출 + Healing drill-down
+8. ✅ **Toast 알림 시스템** (`NotificationCenter.tsx`) — HIGH/CRITICAL incident, HITL, SLO 위반 자동 푸시
+9. ✅ **HITL inline action** (`SelectedIncidentCard.tsx`) — 카드 안에서 직접 Approve/Reject
+
+### 남은 항목
+- **Transformer RUL** (낮음): 라벨 데이터 확보 후
+- **NL-to-Cypher 진단**: LLMOrchestrator + 가드레일
+
+## 본 세션 추가 컴포넌트 (frontend)
+
+`web/src/components/`:
+- `common/severityColors.ts` — severity/status/phase 단일 매핑 (3 컴포넌트 중복 통합)
+- `common/StateMessages.tsx` — EmptyState/LoadingState/ErrorState 표준
+- `common/NotificationCenter.tsx` — Toast 알림 (incident/HITL/SLO)
+- `layout/PageIntent.tsx` — 5 페이지마다 다른 한 질문 헤더
+- `overview/TodayHeadline.tsx` — narrative + 4 KPI drill-down
+- `scenarios/ActiveScenarioPanel.tsx` — 진행 중 시나리오
+- `scenarios/ScenarioPicker.tsx` — Sim Control (강제 trigger + 활성화 카운트)
+- `slo/SLOKpiRibbon.tsx` — 5 SLI 칩 + error budget gauge (SLO view 단독)
+- `slo/SLOSparklines.tsx` — SLI 시계열 + burn rate
+- `slo/SLODefinitions.tsx` — SLI 카탈로그 + selectedSloKey 강조
+- `slo/SLOViolationAlert.tsx` — 위반 알림 + affected_steps drill-down
+- `slo/MicroservicePanel.tsx` — per-step SLI bars
+- `slo/IncidentFlowPanel.tsx` — 7-phase 라이프사이클 + severity 필터
+- `slo/SelectedIncidentCard.tsx` — 워크벤치 + HITL inline + 과거 시그니처
+- `learning/EvolutionTimeline.tsx` — 8 전략 fitness sparkline
+- `learning/FailureChainExplorer.tsx` — anti-recurrence 시그니처
+- `learning/CausalChainTracer.tsx` — L3 multi-hop chain
 
 ### 학술 근거
 - KG-Driven Fault Diagnosis (Sensors, 2025)

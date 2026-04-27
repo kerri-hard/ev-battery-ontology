@@ -4,7 +4,7 @@
 
 > 문제가 생기면 AI가 원인을 찾고, 시뮬레이션으로 미리 검증한 뒤 스스로 복구하며, 같은 장애가 재발하지 않도록 학습한다.
 
-**현재 단계**: L3 자율 공장 + L4 Tier 2 (자동 인과 발견·자가 진화·CDT 시뮬레이션·예측 정확도 자기 보정).
+**현재 단계**: L3 자율 공장 + L4 Tier 2 + 운영자 워크벤치 — 자동 인과 발견·자가 진화·Multi-step PRE-VERIFY·Counterfactual replay·OPC-UA bridge stub·5-페이지 운영 도구.
 
 📖 [VISION.md](VISION.md) · [ARCHITECTURE.md](ARCHITECTURE.md) · [CLAUDE.md](CLAUDE.md)
 
@@ -44,6 +44,35 @@ Next.js + TypeScript                 SelfHealingEngine (v4)
 ```
 
 5 이터레이션마다 EvolutionAgent (8 전략 자가 진화), 7 이터레이션마다 CausalDiscovery (Granger).
+
+## 운영자 대시보드 (5 페이지)
+
+| 페이지 | 한 질문 | 핵심 컴포넌트 |
+|---|---|---|
+| 🏠 **Overview** | "지금 어떻게 돌아가는가?" | TodayHeadline + SLOViolationAlert + ActiveScenarioPanel |
+| 🛡 **Healing** | "이 incident는 누가 잡고 있나?" | Triptych (DETECT/DIAGNOSE/HEAL) + SelectedIncidentCard (HITL inline) |
+| 📊 **SLO** | "어떤 약속이 깨지나?" | SLOKpiRibbon + SLOSparklines + MicroservicePanel |
+| 🧠 **Learning** | "어제와 무엇이 달라졌나?" | EvolutionTimeline + CausalChainTracer + FailureChainExplorer |
+| 🖥 **Console** | "원본 데이터 그대로" | EventLog (필터/검색) + IncidentAnalysis |
+
+**전역**:
+- Header SystemStatusPill — ● 안전 / ⚠ 위반 / 🔴 주의 (5초 룰)
+- Sidebar Sim Control — 20 시나리오 강제 트리거 + 활성화 카운트
+- NotificationCenter — Toast 알림 (HIGH/CRITICAL incident, HITL, SLO 위반)
+- Drill-down — selectedIncidentId/SloKey/StepId/ScenarioId 4 axes 동기
+
+## CI/CD
+
+```yaml
+# .github/workflows/backtest.yml — PR/main push 자동 트리거
+- 10-iter sim seed
+- backtest run + threshold guard:
+  · decision_match >= 0.55
+  · brier <= 0.10
+  · ECE <= 0.30
+  · drift_warnings <= 5
+- 위반 시 exit 1 → CI 차단
+```
 
 ## 프로젝트 구조
 
