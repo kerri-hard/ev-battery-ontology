@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiUrl } from '@/lib/api';
+import { useEngine } from '@/context/EngineContext';
 import GlassCard from '@/components/common/GlassCard';
 import type { ActiveScenario, ScenarioStatus } from '@/types';
 
@@ -79,17 +80,38 @@ export default function ActiveScenarioPanel() {
 
       {/* 진행 중 시나리오 */}
       {active.length === 0 ? (
-        <div className="ds-caption text-white/40 px-2 py-4 text-center">
+        <div className="ds-caption px-2 py-4 text-center">
           진행 중 시나리오 없음 — 다음 sim tick에서 무작위 활성화
         </div>
       ) : (
         <div className="space-y-1.5">
           {active.map((s) => (
-            <ActiveScenarioRow key={s.scenario_id} scenario={s} />
+            <ActiveScenarioRowWithNav key={s.scenario_id} scenario={s} />
           ))}
         </div>
       )}
     </GlassCard>
+  );
+}
+
+function ActiveScenarioRowWithNav({ scenario }: { scenario: ActiveScenario }) {
+  const { state, navigateTo } = useEngine();
+  const isSelected = state.selectedScenarioId === scenario.scenario_id;
+  return (
+    <button
+      onClick={() =>
+        navigateTo({
+          view: 'healing',
+          scenarioId: isSelected ? null : scenario.scenario_id,
+        })
+      }
+      className={`w-full text-left rounded transition ${
+        isSelected ? 'ring-1 ring-cyan-300/60' : 'hover:bg-white/5'
+      }`}
+      title="Healing 페이지에서 이 시나리오의 incident 추적 →"
+    >
+      <ActiveScenarioRow scenario={scenario} />
+    </button>
   );
 }
 

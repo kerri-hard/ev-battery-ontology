@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext } from 'react';
-import type { EngineState, WSCommand, ViewKey } from '@/types';
+import type { EngineState, WSCommand, ViewKey, NavTarget } from '@/types';
 import { useHarnessEngine } from '@/hooks/useHarnessEngine';
 
 interface EngineContextValue {
@@ -9,6 +9,7 @@ interface EngineContextValue {
   sendCommand: (cmd: WSCommand) => void;
   selectIncident: (id: string | null) => void;
   setView: (view: ViewKey) => void;
+  navigateTo: (target: NavTarget) => void;
 }
 
 const EngineContext = createContext<EngineContextValue | null>(null);

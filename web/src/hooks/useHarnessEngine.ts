@@ -54,6 +54,9 @@ const initialState: EngineState = {
     orchestrator_traces: [],
   },
   selectedIncidentId: null,
+  selectedSloKey: null,
+  selectedStepId: null,
+  selectedScenarioId: null,
   currentView: 'healing',
 };
 
@@ -62,6 +65,7 @@ type Action =
   | { type: 'SET_DISCONNECTED' }
   | { type: 'SELECT_INCIDENT'; id: string | null }
   | { type: 'SET_VIEW'; view: import('@/types').ViewKey }
+  | { type: 'NAVIGATE'; target: import('@/types').NavTarget }
   | { type: 'WS_EVENT'; event: string; data: Record<string, unknown> };
 
 function reducer(state: EngineState, action: Action): EngineState {
@@ -74,6 +78,17 @@ function reducer(state: EngineState, action: Action): EngineState {
       return { ...state, selectedIncidentId: action.id };
     case 'SET_VIEW':
       return { ...state, currentView: action.view };
+    case 'NAVIGATE': {
+      const t = action.target;
+      return {
+        ...state,
+        currentView: t.view ?? state.currentView,
+        selectedIncidentId: t.incidentId !== undefined ? t.incidentId : state.selectedIncidentId,
+        selectedSloKey: t.sloKey !== undefined ? t.sloKey : state.selectedSloKey,
+        selectedStepId: t.stepId !== undefined ? t.stepId : state.selectedStepId,
+        selectedScenarioId: t.scenarioId !== undefined ? t.scenarioId : state.selectedScenarioId,
+      };
+    }
     case 'WS_EVENT': {
       const handler = eventHandlers[action.event];
       return handler ? handler(state, action.data) : state;
@@ -133,5 +148,9 @@ export function useHarnessEngine() {
     dispatch({ type: 'SET_VIEW', view });
   }, []);
 
-  return { state, sendCommand, selectIncident, setView };
+  const navigateTo = useCallback((target: import('@/types').NavTarget) => {
+    dispatch({ type: 'NAVIGATE', target });
+  }, []);
+
+  return { state, sendCommand, selectIncident, setView, navigateTo };
 }

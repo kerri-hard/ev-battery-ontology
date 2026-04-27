@@ -18,9 +18,14 @@ type PhaseStatus = 'pending' | 'success' | 'fail' | 'rejected';
 
 /** 실시간 incident 라이프사이클 — 7-페이즈 진행 상태 + 결과 */
 export default function IncidentFlowPanel() {
-  const { state, selectIncident } = useEngine();
+  const { state, selectIncident, navigateTo } = useEngine();
   const incidents = state.healing?.recentIncidents ?? [];
-  const sorted = [...incidents]
+  const selectedStepId = state.selectedStepId;
+  // step 선택 시 해당 step의 incident만 노출 (drill-down 필터)
+  const filtered = selectedStepId
+    ? incidents.filter((i) => i.step_id === selectedStepId)
+    : incidents;
+  const sorted = [...filtered]
     .sort((a, b) => (b.iteration ?? 0) - (a.iteration ?? 0))
     .slice(0, 12);
   const selectedId = state.selectedIncidentId;
@@ -28,12 +33,21 @@ export default function IncidentFlowPanel() {
   return (
     <GlassCard className="p-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] font-bold text-white/60 uppercase tracking-wider">
-          Incident Flow — 라이프사이클
-        </span>
-        <span className="text-[9px] text-white/40 font-mono">
-          최근 {sorted.length} / {incidents.length}건
-        </span>
+        <span className="ds-label">Incident Flow — 라이프사이클</span>
+        <div className="flex items-center gap-2">
+          {selectedStepId && (
+            <button
+              onClick={() => navigateTo({ stepId: null })}
+              className="text-[8px] px-1.5 py-0.5 rounded pill-info font-mono hover:opacity-90"
+              title="필터 해제"
+            >
+              {selectedStepId} ✕
+            </button>
+          )}
+          <span className="ds-caption">
+            최근 {sorted.length} / {incidents.length}건
+          </span>
+        </div>
       </div>
 
       {/* Phase 헤더 */}

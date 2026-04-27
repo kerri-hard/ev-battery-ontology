@@ -455,8 +455,23 @@ export interface EngineState {
   slo?: SLOState;
   // 사용자가 클릭한 incident ID — Triptych의 lane 동기화에 사용
   selectedIncidentId?: string | null;
+  // SLO drill-down — 클릭한 SLI key (auto_recovery_rate, yield_compliance 등)
+  selectedSloKey?: string | null;
+  // step drill-down — 클릭한 ProcessStep id (PS-301 등)
+  selectedStepId?: string | null;
+  // 시나리오 drill-down — 클릭한 scenario id (SCN-009 등)
+  selectedScenarioId?: string | null;
   // Sidebar nav로 선택한 페이지
   currentView?: ViewKey;
+}
+
+/** Drill-down 통합 페이로드 — 한 클릭으로 view + selection 동기화 */
+export interface NavTarget {
+  view?: ViewKey;
+  incidentId?: string | null;
+  sloKey?: string | null;
+  stepId?: string | null;
+  scenarioId?: string | null;
 }
 
 export type ViewKey = 'overview' | 'healing' | 'slo' | 'learning' | 'console';

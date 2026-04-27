@@ -156,8 +156,8 @@ export default function Header() {
 
 /** 전역 시스템 상태 신호등 — 5초 룰 (모든 페이지에서 보임) */
 function SystemStatusPill() {
-  const { state, setView } = useEngine();
-  const violations = state.slo?.violations.length ?? 0;
+  const { state, navigateTo } = useEngine();
+  const violations = state.slo?.violations ?? [];
   const incidents = state.healing.incidents ?? 0;
   const autoRecovered = state.healing.autoRecovered ?? 0;
   const recovery_rate = incidents > 0 ? autoRecovered / incidents : 1;
@@ -165,11 +165,11 @@ function SystemStatusPill() {
   let level: 'success' | 'warning' | 'danger' = 'success';
   let label = '● 모든 SLO 충족';
   let detail = '시스템 안정';
-  if (violations >= 2 || recovery_rate < 0.8) {
+  if (violations.length >= 2 || recovery_rate < 0.8) {
     level = 'danger';
     label = '🔴 주의';
-    detail = `${violations}건 SLO 위반 / 복구율 ${(recovery_rate * 100).toFixed(0)}%`;
-  } else if (violations >= 1) {
+    detail = `${violations.length}건 SLO 위반 / 복구율 ${(recovery_rate * 100).toFixed(0)}%`;
+  } else if (violations.length >= 1) {
     level = 'warning';
     label = '⚠ 1건 위반';
     detail = `복구율 ${(recovery_rate * 100).toFixed(0)}%`;
@@ -182,11 +182,18 @@ function SystemStatusPill() {
         ? 'pill-warning'
         : 'pill-danger';
 
+  // 첫 위반의 SLI key를 sloKey로 함께 보내 SLO view에서 자동 강조
+  const firstSloKey = violations.length > 0 ? violations[0].sli : null;
+
   return (
     <button
-      onClick={() => setView('slo')}
+      onClick={() => navigateTo({ view: 'slo', sloKey: firstSloKey })}
       className={`px-3 py-1 rounded-full ${cls} flex items-center gap-2 hover:opacity-90 transition`}
-      title="SLO 페이지로 이동"
+      title={
+        violations.length > 0
+          ? `SLO 페이지로 이동 — ${violations[0].name} 강조`
+          : 'SLO 페이지로 이동'
+      }
     >
       <span className="text-[11px] font-bold">{label}</span>
       <span className="text-[9px] font-mono opacity-80">{detail}</span>

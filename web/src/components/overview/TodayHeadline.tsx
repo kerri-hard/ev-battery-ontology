@@ -2,10 +2,11 @@
 
 import { useEngine } from '@/context/EngineContext';
 import GlassCard from '@/components/common/GlassCard';
+import type { NavTarget } from '@/types';
 
-/** Overview 최상단 헤드라인 — 24h(또는 sim 누적) 핵심 지표 한 줄 narrative */
+/** Overview 최상단 헤드라인 — 24h(또는 sim 누적) 핵심 지표 한 줄 narrative + drill-down */
 export default function TodayHeadline() {
-  const { state } = useEngine();
+  const { state, navigateTo } = useEngine();
   const h = state.healing;
   const slo = state.slo?.global;
   const incidents = h?.incidents ?? 0;
@@ -31,20 +32,24 @@ export default function TodayHeadline() {
       <div className="flex items-center justify-between gap-4">
         {/* Headline */}
         <div className="flex-1 min-w-0">
-          <div className="ds-label text-white/40 mb-1.5">📊 오늘의 요약 — sim 누적</div>
-          <div className="ds-heading text-white/90 text-base leading-snug">{narrative}</div>
+          <div className="ds-label mb-1.5">📊 오늘의 요약 — sim 누적</div>
+          <div className="ds-heading text-base leading-snug">{narrative}</div>
         </div>
 
-        {/* Quick KPI grid */}
+        {/* Quick KPI grid — 클릭하면 해당 view로 drill-down */}
         <div className="grid grid-cols-4 gap-3 shrink-0">
           <KPI label="자동 복구" value={incidents > 0 ? `${autoRecovered}/${incidents}` : '0/0'}
-            sub={`${(recoveryRate * 100).toFixed(0)}%`} ok={recoveryRate >= 0.95} />
+            sub={`${(recoveryRate * 100).toFixed(0)}%`} ok={recoveryRate >= 0.95}
+            nav={{ view: 'healing' }} navigateTo={navigateTo} />
           <KPI label="MTTR (p50)" value={`${mttrMs.toFixed(1)}ms`}
-            sub="복구 지연" ok={mttrMs < 50} />
+            sub="복구 지연" ok={mttrMs < 50}
+            nav={{ view: 'slo', sloKey: 'p95_recovery_latency' }} navigateTo={navigateTo} />
           <KPI label="수율 준수" value={`${(yieldCompliance * 100).toFixed(1)}%`}
-            sub="≥0.99" ok={yieldCompliance >= 0.95} />
+            sub="≥0.99" ok={yieldCompliance >= 0.95}
+            nav={{ view: 'slo', sloKey: 'yield_compliance' }} navigateTo={navigateTo} />
           <KPI label="재발률" value={`${(repeatRate * 100).toFixed(0)}%`}
-            sub="동일 시그니처" ok={repeatRate < 0.25} />
+            sub="동일 시그니처" ok={repeatRate < 0.25}
+            nav={{ view: 'learning' }} navigateTo={navigateTo} />
         </div>
       </div>
     </GlassCard>
@@ -79,14 +84,32 @@ function buildNarrative(a: NarrativeArgs): string {
   return parts.join(' · ');
 }
 
-function KPI({ label, value, sub, ok }: { label: string; value: string; sub: string; ok: boolean }) {
+function KPI({
+  label,
+  value,
+  sub,
+  ok,
+  nav,
+  navigateTo,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  ok: boolean;
+  nav: NavTarget;
+  navigateTo: (t: NavTarget) => void;
+}) {
   return (
-    <div className="text-right">
-      <div className="ds-caption text-white/40">{label}</div>
+    <button
+      onClick={() => navigateTo(nav)}
+      className="text-right hover:bg-white/5 rounded px-2 py-1 transition cursor-pointer"
+      title={`${label} 상세 보기 →`}
+    >
+      <div className="ds-caption">{label}</div>
       <div className={`text-xl font-mono font-bold ${ok ? 'text-emerald-300' : 'text-amber-300'}`}>
         {value}
       </div>
-      <div className="ds-caption text-white/30">{sub}</div>
-    </div>
+      <div className="ds-caption">{sub}</div>
+    </button>
   );
 }
