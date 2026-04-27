@@ -35,6 +35,12 @@ def _print_summary(report: dict) -> None:
           f"hist_demoted: {report.get('historical_demoted_rate', 0):.1%})")
     print(f"  Confidence Brier:      {report['confidence_brier']:.4f} (lower=better)")
     print(f"  Calibration ECE:       {report['confidence_ece']:.4f} (lower=better)")
+    cf = report.get('counterfactual', {})
+    if cf:
+        action_val = cf.get('action_value', 0)
+        sign = '+' if action_val > 0 else ''
+        print(f"  Counterfactual:        action_value = {sign}{action_val:.4f} "
+              f"(chosen {cf.get('avg_chosen_delta', 0):.4f} - baseline {cf.get('baseline_delta', 0):.4f})")
     print()
     print("  Per-action breakdown:")
     for action, stats in sorted(report["per_action_breakdown"].items()):

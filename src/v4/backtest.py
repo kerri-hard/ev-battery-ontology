@@ -82,6 +82,12 @@ class BacktestRunner:
         force_escalates = sum(1 for r in usable if r.get("force_escalate"))
         hist_demoted = sum(1 for r in usable if r.get("historical_demoted"))
 
+        # Counterfactual: 액션 미실행 시 expected yield 변화 (negative or 0)
+        # 가정: 액션 안 했다면 yield 변동은 시나리오의 자연 추세 (incident가 발생했으니 보통 음의 drift).
+        # historical 데이터에서 (auto_recovered=False AND improved=False) 케이스의 평균 delta를 baseline으로
+        # 추정. 그 외에는 0 (보수적: 변화 없음 가정).
+        counterfactuals = self._compute_counterfactuals(usable)
+
         return {
             "snapshot": self.snapshot_path,
             "evaluated_at": datetime.now().isoformat(),
@@ -92,6 +98,7 @@ class BacktestRunner:
             "policy_switch_rate": _safe_div(policy_switches, len(usable), 4),
             "force_escalate_rate": _safe_div(force_escalates, len(usable), 4),
             "historical_demoted_rate": _safe_div(hist_demoted, len(usable), 4),
+            "counterfactual": counterfactuals,
             "confidence_brier": _brier_score(usable),
             "confidence_ece": _expected_calibration_error(usable),
             "per_action_breakdown": _per_action_breakdown(usable),
@@ -199,6 +206,56 @@ class BacktestRunner:
             "historical_demoted": historical_demoted,
             "signature_count_at_replay": pre_count,
             "error": None,
+        }
+
+    def _compute_counterfactuals(self, usable: list) -> dict:
+        """Counterfactual replay — "액션 안 했다면?" 추정.
+
+        VISION §9.5 학습 정량화: 자율 복구의 실제 가치 = (실측 yield 개선) - (액션 없을 때 yield).
+        보수적 추정 — historical 중 (auto_recovered=False OR improved=False)의 평균 delta가
+        '자연 변동' baseline. 액션 적용한 사례에선 chosen_delta - baseline이 그 액션 가치.
+        """
+        snapshot_incidents = self.incidents
+        # baseline: improved=False 사례의 yield delta 평균 (보통 0 또는 음수)
+        no_improve_deltas = []
+        for inc in snapshot_incidents:
+            improved = inc.get("improved")
+            pre = inc.get("pre_yield")
+            post = inc.get("post_yield")
+            if improved is False and isinstance(pre, (int, float)) and isinstance(post, (int, float)):
+                no_improve_deltas.append(float(post) - float(pre))
+        baseline_delta = (
+            sum(no_improve_deltas) / len(no_improve_deltas)
+            if no_improve_deltas else 0.0
+        )
+
+        # actual: improved=True 사례의 평균 delta
+        improved_deltas = []
+        for inc in snapshot_incidents:
+            improved = inc.get("improved")
+            pre = inc.get("pre_yield")
+            post = inc.get("post_yield")
+            if improved is True and isinstance(pre, (int, float)) and isinstance(post, (int, float)):
+                improved_deltas.append(float(post) - float(pre))
+        avg_chosen_delta = (
+            sum(improved_deltas) / len(improved_deltas)
+            if improved_deltas else 0.0
+        )
+
+        # 자율 복구 가치 = chosen - counterfactual baseline
+        action_value = avg_chosen_delta - baseline_delta
+
+        return {
+            "baseline_delta": round(baseline_delta, 6),
+            "avg_chosen_delta": round(avg_chosen_delta, 6),
+            "action_value": round(action_value, 6),
+            "n_baseline_samples": len(no_improve_deltas),
+            "n_chosen_samples": len(improved_deltas),
+            "interpretation": (
+                "positive = 자율 복구가 실제 yield 향상 기여"
+                if action_value > 0
+                else "non-positive = 액션 가치 미입증 (counterfactual 데이터 부족)"
+            ),
         }
 
     def _update_tracker(self, inc: dict) -> None:
