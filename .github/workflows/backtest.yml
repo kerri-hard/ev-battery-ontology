@@ -1,0 +1,67 @@
+name: Backtest Regression Guard
+
+on:
+  pull_request:
+    paths:
+      - 'src/v4/**'
+      - 'scripts/backtest*.py'
+      - 'data/**'
+  workflow_dispatch:
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run short sim (10 iter) to seed snapshot
+        run: |
+          PYTHONPATH=src python3 -B -c "
+          import asyncio
+          from v4.engine import SelfHealingEngine
+          async def main():
+              eng = SelfHealingEngine(db_path='kuzu_ci', results_dir='results')
+              await eng.initialize()
+              eng.max_iterations = 10
+              eng.speed = 1.0
+              await eng.run_healing_loop()
+              print(f'iter={eng.healing_iteration} incidents={len(eng.healing_history)}')
+          asyncio.run(main())
+          "
+
+      - name: Run backtest
+        run: |
+          mkdir -p results
+          REPORT="results/ci_backtest_report.json"
+          python3 scripts/backtest.py \
+            --snapshot results/self_healing_v4_latest.json \
+            --output "$REPORT"
+          echo "REPORT=$REPORT" >> "$GITHUB_ENV"
+
+      - name: Apply CI guard thresholds
+        run: |
+          python3 scripts/backtest_ci_guard.py --report "$REPORT"
+        env:
+          # CLAUDE.md 수렴 기반 임계값. PR 주에 override 가능
+          BACKTEST_MIN_DECISION_MATCH: '0.55'
+          BACKTEST_MAX_BRIER: '0.10'
+          BACKTEST_MAX_ECE: '0.30'
+          BACKTEST_MAX_DRIFT: '5'
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-report
+          path: results/ci_backtest_report.json

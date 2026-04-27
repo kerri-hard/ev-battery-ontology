@@ -47,45 +47,125 @@ function EventLog() {
   const { state } = useEngine();
   const listRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  const [query, setQuery] = useState('');
+  const [phaseFilter, setPhaseFilter] = useState<string | null>(null);
+
+  // phase 목록 추출 (실제 로그에 등장한 phase만)
+  const availablePhases = Array.from(
+    new Set(state.eventLog.map((e) => e.phase).filter(Boolean) as string[]),
+  );
+
+  // 필터 적용
+  const filtered = state.eventLog.filter((e) => {
+    if (phaseFilter && e.phase !== phaseFilter) return false;
+    if (query) {
+      const q = query.toLowerCase();
+      const inMsg = (e.message ?? '').toLowerCase().includes(q);
+      const inTs = (e.ts ?? '').toLowerCase().includes(q);
+      const inPhase = (e.phase ?? '').toLowerCase().includes(q);
+      if (!inMsg && !inTs && !inPhase) return false;
+    }
+    return true;
+  });
+  const visible = filtered.slice(-200);
 
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-
-    // 사용자가 로그 하단을 보고 있을 때만 자동 스크롤한다.
     if (stickToBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [state.eventLog.length]);
+  }, [visible.length]);
 
   const handleLogScroll = () => {
     const el = listRef.current;
     if (!el) return;
-    const threshold = 24; // px
+    const threshold = 24;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickToBottomRef.current = distFromBottom <= threshold;
   };
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
-        <span className="text-[10px] font-bold text-white/30 uppercase tracking-wider">이벤트 로그</span>
-        <span className="text-[9px] font-mono text-white/20">{state.eventLog.length}</span>
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5 gap-2">
+        <span className="ds-label">이벤트 로그</span>
+        <span className="ds-caption">
+          {filtered.length} / {state.eventLog.length}건 {query || phaseFilter ? '(필터)' : ''}
+        </span>
+      </div>
+      {/* 필터 바 */}
+      <div className="px-3 py-1.5 border-b border-white/5 flex items-center gap-1.5 flex-wrap">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="🔍 검색 (메시지/시간/phase)"
+          className="flex-1 min-w-[140px] bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px] text-white/80 placeholder:text-white/30 focus:outline-none focus:border-cyan-400/40"
+        />
+        <button
+          onClick={() => setPhaseFilter(null)}
+          className={`text-[8px] px-1.5 py-1 rounded font-mono border ${
+            phaseFilter === null ? 'pill-info border-current' : 'bg-white/5 text-white/50 border-white/10 hover:bg-white/10'
+          }`}
+        >
+          전체
+        </button>
+        {availablePhases.slice(0, 8).map((p) => (
+          <button
+            key={p}
+            onClick={() => setPhaseFilter(phaseFilter === p ? null : p)}
+            className={`text-[8px] px-1.5 py-1 rounded font-mono border ${
+              phaseFilter === p ? 'pill-info border-current' : 'bg-white/5 text-white/50 border-white/10 hover:bg-white/10'
+            }`}
+          >
+            {p}
+          </button>
+        ))}
+        {(query || phaseFilter) && (
+          <button
+            onClick={() => { setQuery(''); setPhaseFilter(null); }}
+            className="text-[8px] px-1.5 py-1 rounded font-mono pill-warning hover:opacity-90"
+            title="필터 해제"
+          >
+            ✕ 해제
+          </button>
+        )}
       </div>
       <div
         ref={listRef}
         onScroll={handleLogScroll}
         className="flex-1 overflow-y-auto px-3 py-1 space-y-0.5 min-h-0"
       >
-        {state.eventLog.slice(-60).map((entry, i) => (
-          <div key={i} className="flex items-start gap-1.5 text-[10px] leading-relaxed animate-fade-in">
-            <span className="font-mono text-white/20 whitespace-nowrap">{entry.ts}</span>
-            {entry.phase && <Badge phase={entry.phase} />}
-            <span className="text-white/50 truncate">{entry.message}</span>
+        {visible.length === 0 ? (
+          <div className="ds-caption text-center py-4">
+            {state.eventLog.length === 0 ? '이벤트 없음' : '필터 결과 없음'}
           </div>
-        ))}
+        ) : (
+          visible.map((entry, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-[10px] leading-relaxed animate-fade-in">
+              <span className="font-mono text-white/20 whitespace-nowrap">{entry.ts}</span>
+              {entry.phase && <Badge phase={entry.phase} />}
+              <span className="text-white/50 truncate" title={entry.message}>
+                {highlightMatch(entry.message, query)}
+              </span>
+            </div>
+          ))
+        )}
       </div>
     </div>
+  );
+}
+
+function highlightMatch(text: string, query: string): React.ReactNode {
+  if (!query || !text) return text;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-cyan-400/30 text-cyan-100 rounded px-0.5">{text.slice(idx, idx + query.length)}</mark>
+      {text.slice(idx + query.length)}
+    </>
   );
 }
 
@@ -416,17 +496,17 @@ function OverviewView() {
       {/* HERO: TodayHeadline 단독 — 5초 룰 narrative (KpiRibbon은 SLO view 전용) */}
       <TodayHeadline />
       {/* Supporting: 위반 알림 + 활성 시나리오 */}
-      <div className="grid grid-cols-12 gap-2">
-        <div className="col-span-7">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+        <div className="md:col-span-7">
           <SLOViolationAlert />
         </div>
-        <div className="col-span-5">
+        <div className="md:col-span-5">
           <ActiveScenarioPanel />
         </div>
       </div>
       {/* Supporting: 4 mini metric + AutonomyHero + Research */}
-      <div className="grid grid-cols-12 gap-2">
-        <div className="col-span-4 grid grid-cols-2 gap-1.5">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+        <div className="md:col-span-4 grid grid-cols-2 gap-1.5">
           <MiniMetric label="노드" value={metrics ? String(metrics.total_nodes) : '--'}
             delta={metrics && prevMetrics ? metrics.total_nodes - prevMetrics.total_nodes : null}
             sparkData={metricsHistory.nodes} color="#00d2ff" />
@@ -440,10 +520,10 @@ function OverviewView() {
             delta={metrics && prevMetrics ? metrics.completeness_score - prevMetrics.completeness_score : null}
             sparkData={metricsHistory.completeness} color="#f59e0b" />
         </div>
-        <div className="col-span-4">
+        <div className="md:col-span-4">
           <AutonomyHero />
         </div>
-        <div className="col-span-4">
+        <div className="md:col-span-4">
           <ResearchProgressPanel />
         </div>
       </div>
@@ -456,16 +536,16 @@ function HealingView() {
     <div className="flex flex-col gap-2">
       {/* Supporting: 진행 중 시나리오 (KpiRibbon 제거 — SLO view 전용) */}
       <ActiveScenarioPanel />
-      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-240px)]">
-        <div className="col-span-9 flex flex-col gap-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 min-h-[calc(100vh-240px)]">
+        <div className="lg:col-span-9 flex flex-col gap-1 min-h-0">
           <div className="text-[10px] font-bold text-purple-300/80 uppercase tracking-widest px-2">
             ② DIAGNOSE — 온톨로지 + 인과 추적 (메인)
           </div>
-          <div className="flex-1 min-h-[640px]">
+          <div className="flex-1 min-h-[400px] lg:min-h-[640px]">
             <OntologyGraph className="h-full" />
           </div>
         </div>
-        <div className="col-span-3 flex flex-col gap-2 min-h-0">
+        <div className="lg:col-span-3 flex flex-col gap-2 min-h-0">
           <div className="flex flex-col gap-1 flex-1 min-h-[260px]">
             <div className="text-[9px] font-bold text-cyan-300/80 uppercase tracking-widest px-2">
               ① DETECT — 이상 감지
@@ -495,11 +575,11 @@ function SLOView() {
       <SLOViolationAlert />
       {/* 시계열 sparkline + burn rate */}
       <SLOSparklines />
-      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-440px)]">
-        <div className="col-span-4 overflow-auto">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-2 md:min-h-[calc(100vh-440px)]">
+        <div className="md:col-span-4 overflow-auto">
           <SLODefinitions />
         </div>
-        <div className="col-span-8 overflow-auto">
+        <div className="md:col-span-8 overflow-auto">
           <MicroservicePanel />
         </div>
       </div>
@@ -514,12 +594,13 @@ function LearningView() {
       <EvolutionTimeline />
       {/* Supporting: 진행 중 시나리오 — 학습 신호 컨텍스트 */}
       <ActiveScenarioPanel />
-      <div className="grid grid-cols-12 gap-2">
-        <div className="col-span-6 flex flex-col gap-2">
+      {/* Learning grid — 모바일 stack */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+        <div className="md:col-span-6 flex flex-col gap-2">
           <FailureChainExplorer />
           <RecurrencePanel />
         </div>
-        <div className="col-span-6 flex flex-col gap-2">
+        <div className="md:col-span-6 flex flex-col gap-2">
           <PreverifyPanel />
           <ResearchProgressPanel />
           <AutonomyHero />
@@ -533,8 +614,8 @@ function ConsoleView() {
   return (
     <div className="flex flex-col gap-2">
       {/* Console: KpiRibbon 제거 — Raw observability 전용 (PageIntent로 충분) */}
-      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-180px)]">
-        <div className="col-span-5 flex flex-col gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-2 md:min-h-[calc(100vh-180px)]">
+        <div className="md:col-span-5 flex flex-col gap-2">
           <div className="glass overflow-hidden h-[300px]">
             <IncidentAnalysis />
           </div>
@@ -542,7 +623,7 @@ function ConsoleView() {
             <EventLog />
           </div>
         </div>
-        <div className="col-span-7 flex flex-col gap-2">
+        <div className="md:col-span-7 flex flex-col gap-2">
           <PredictiveRiskPanel />
           <OrchestratorPanel />
           <RecoveryCasePanel />
