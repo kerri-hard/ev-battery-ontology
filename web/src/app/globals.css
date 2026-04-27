@@ -2,6 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ───── Design Tokens ─────
+ * 색상 의미 (semantic):
+ *   --color-success: 자동 복구 성공, SLO 충족, verified
+ *   --color-warning: HITL 대기, 회복 가능, 주의 (amber)
+ *   --color-danger:  SLO 위반, 회복 실패, escalate (rose)
+ *   --color-critical: 시스템 위험, 다중 violation (red)
+ *   --color-info:    진단 정보, causal link, pattern match (cyan)
+ *   --color-meta:    metadata, secondary (purple)
+ *   --color-neutral: label, divider (white/40)
+ * Typography scale: label(10px uppercase) / caption(9px mono) / body(11px) / heading(12-14px)
+ */
+:root {
+  --color-success: #34d399;       /* emerald-400 */
+  --color-success-bg: rgba(52, 211, 153, 0.15);
+  --color-success-border: rgba(52, 211, 153, 0.40);
+  --color-warning: #fbbf24;       /* amber-400 */
+  --color-warning-bg: rgba(251, 191, 36, 0.15);
+  --color-warning-border: rgba(251, 191, 36, 0.40);
+  --color-danger: #fb7185;        /* rose-400 */
+  --color-danger-bg: rgba(251, 113, 133, 0.15);
+  --color-danger-border: rgba(251, 113, 133, 0.40);
+  --color-critical: #ef4444;      /* red-500 */
+  --color-critical-bg: rgba(239, 68, 68, 0.20);
+  --color-info: #22d3ee;          /* cyan-400 */
+  --color-info-bg: rgba(34, 211, 238, 0.15);
+  --color-info-border: rgba(34, 211, 238, 0.40);
+  --color-meta: #a78bfa;          /* purple-400 */
+  --color-neutral: rgba(255, 255, 255, 0.40);
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+}
+
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
@@ -24,5 +58,51 @@ body {
   .glass-hover:hover {
     background: rgba(255,255,255,0.07);
     border-color: rgba(255,255,255,0.15);
+  }
+
+  /* Typography hierarchy */
+  .ds-heading {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: rgba(255, 255, 255, 0.85);
+  }
+  .ds-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .ds-body {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.80);
+  }
+  .ds-caption {
+    font-size: 9px;
+    font-family: ui-monospace, monospace;
+    color: rgba(255, 255, 255, 0.40);
+  }
+
+  /* Status pill — semantic */
+  .pill-success {
+    background: var(--color-success-bg);
+    border: 1px solid var(--color-success-border);
+    color: var(--color-success);
+  }
+  .pill-warning {
+    background: var(--color-warning-bg);
+    border: 1px solid var(--color-warning-border);
+    color: var(--color-warning);
+  }
+  .pill-danger {
+    background: var(--color-danger-bg);
+    border: 1px solid var(--color-danger-border);
+    color: var(--color-danger);
+  }
+  .pill-info {
+    background: var(--color-info-bg);
+    border: 1px solid var(--color-info-border);
+    color: var(--color-info);
   }
 }

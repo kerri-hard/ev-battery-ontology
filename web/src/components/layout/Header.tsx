@@ -36,7 +36,7 @@ export default function Header() {
         backdropFilter: 'blur(16px)',
         borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
       }}>
-      {/* Left: Title + Badge */}
+      {/* Left: Title + Status Pill (5초 룰) */}
       <div className="flex items-center gap-3">
         <span className="font-bold text-lg text-text-primary tracking-tight">
           EV Battery
@@ -49,6 +49,7 @@ export default function Header() {
           }}>
           Self-Healing Factory
         </span>
+        <SystemStatusPill />
       </div>
 
       {/* Center: Phase indicator (compact horizontal) */}
@@ -150,5 +151,45 @@ export default function Header() {
         <ConnectionDot status={state.connectionStatus} />
       </div>
     </header>
+  );
+}
+
+/** 전역 시스템 상태 신호등 — 5초 룰 (모든 페이지에서 보임) */
+function SystemStatusPill() {
+  const { state, setView } = useEngine();
+  const violations = state.slo?.violations.length ?? 0;
+  const incidents = state.healing.incidents ?? 0;
+  const autoRecovered = state.healing.autoRecovered ?? 0;
+  const recovery_rate = incidents > 0 ? autoRecovered / incidents : 1;
+
+  let level: 'success' | 'warning' | 'danger' = 'success';
+  let label = '● 모든 SLO 충족';
+  let detail = '시스템 안정';
+  if (violations >= 2 || recovery_rate < 0.8) {
+    level = 'danger';
+    label = '🔴 주의';
+    detail = `${violations}건 SLO 위반 / 복구율 ${(recovery_rate * 100).toFixed(0)}%`;
+  } else if (violations >= 1) {
+    level = 'warning';
+    label = '⚠ 1건 위반';
+    detail = `복구율 ${(recovery_rate * 100).toFixed(0)}%`;
+  }
+
+  const cls =
+    level === 'success'
+      ? 'pill-success'
+      : level === 'warning'
+        ? 'pill-warning'
+        : 'pill-danger';
+
+  return (
+    <button
+      onClick={() => setView('slo')}
+      className={`px-3 py-1 rounded-full ${cls} flex items-center gap-2 hover:opacity-90 transition`}
+      title="SLO 페이지로 이동"
+    >
+      <span className="text-[11px] font-bold">{label}</span>
+      <span className="text-[9px] font-mono opacity-80">{detail}</span>
+    </button>
   );
 }

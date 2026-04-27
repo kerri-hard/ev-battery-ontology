@@ -513,6 +513,30 @@ export interface PreverifyState {
   current_thresholds: Record<string, number>;
 }
 
+// ── Scenario ──
+
+export interface ActiveScenario {
+  scenario_id: string;
+  name: string;
+  category: string;
+  severity: string;
+  root_cause: string;
+  elapsed_ticks: number;
+  effects_injected: number;
+  total_effects: number;
+  degradation?: Record<string, { sensor: string; progress: number; total: number }> | null;
+  activated_at: string;
+}
+
+export interface ScenarioStatus {
+  active: ActiveScenario[];
+  library_stats: {
+    by_severity?: Record<string, number>;
+    by_category?: Record<string, number>;
+  };
+  total_library: number;
+}
+
 // ── SLO / SLI ──
 
 export interface SLODefinition {

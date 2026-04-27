@@ -18,6 +18,8 @@ import SLOSparklines from '@/components/slo/SLOSparklines';
 import SLOViolationAlert from '@/components/slo/SLOViolationAlert';
 import EvolutionTimeline from '@/components/learning/EvolutionTimeline';
 import FailureChainExplorer from '@/components/learning/FailureChainExplorer';
+import TodayHeadline from '@/components/overview/TodayHeadline';
+import ActiveScenarioPanel from '@/components/scenarios/ActiveScenarioPanel';
 import SparklineChart from '@/components/charts/SparklineChart';
 import Badge from '@/components/common/Badge';
 import { apiUrl } from '@/lib/api';
@@ -409,9 +411,18 @@ function OverviewView() {
   const { metrics, prevMetrics, metricsHistory } = state;
   return (
     <div className="flex flex-col gap-2">
+      {/* 최상단 24h Headline — 5초 룰 narrative */}
+      <TodayHeadline />
       <SLOKpiRibbon />
-      {/* SLO 위반 알림 — 핵심 강조 */}
-      <SLOViolationAlert />
+      {/* SLO 위반 알림 + 활성 시나리오 */}
+      <div className="grid grid-cols-12 gap-2">
+        <div className="col-span-7">
+          <SLOViolationAlert />
+        </div>
+        <div className="col-span-5">
+          <ActiveScenarioPanel />
+        </div>
+      </div>
       <div className="grid grid-cols-12 gap-2">
         <div className="col-span-4 grid grid-cols-2 gap-1.5">
           <MiniMetric label="노드" value={metrics ? String(metrics.total_nodes) : '--'}
@@ -450,7 +461,9 @@ function HealingView() {
   return (
     <div className="flex flex-col gap-2">
       <SLOKpiRibbon />
-      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-200px)]">
+      {/* 진행 중 시나리오 — Healing 맥락에서 어떤 incident가 어디서 왔는지 */}
+      <ActiveScenarioPanel />
+      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-280px)]">
         <div className="col-span-9 flex flex-col gap-1 min-h-0">
           <div className="text-[10px] font-bold text-purple-300/80 uppercase tracking-widest px-2">
             ② DIAGNOSE — 온톨로지 + 인과 추적 (메인)
@@ -505,6 +518,8 @@ function LearningView() {
   return (
     <div className="flex flex-col gap-2">
       <SLOKpiRibbon />
+      {/* 진행 중 시나리오 — Learning 맥락에서 시나리오 → 학습 신호 추적 */}
+      <ActiveScenarioPanel />
       {/* Top: Evolution timeline (전 폭) */}
       <EvolutionTimeline />
       <div className="grid grid-cols-12 gap-2">

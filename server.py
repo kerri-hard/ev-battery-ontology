@@ -401,6 +401,29 @@ async def replay_eval():
         return JSONResponse({"variants": [], "error": str(e)})
 
 
+@app.get("/api/active-scenarios")
+async def active_scenarios():
+    """진행 중인 시나리오 + 라이브러리 통계."""
+    if not hasattr(engine, "scenario_engine") or engine.scenario_engine is None:
+        return JSONResponse({"active": [], "library_stats": {}, "total_library": 0})
+    try:
+        active = engine.scenario_engine.get_active_scenarios()
+        library = engine.scenario_engine.get_scenario_library()
+        from collections import Counter
+        sev_counter = Counter(s.get("severity") for s in library)
+        cat_counter = Counter(s.get("category") for s in library)
+        return JSONResponse({
+            "active": active,
+            "library_stats": {
+                "by_severity": dict(sev_counter),
+                "by_category": dict(cat_counter),
+            },
+            "total_library": len(library),
+        })
+    except Exception as e:
+        return JSONResponse({"active": [], "library_stats": {}, "total_library": 0, "error": str(e)})
+
+
 @app.post("/api/init")
 async def init_engine():
     if engine.running:
