@@ -34,11 +34,12 @@ const CATEGORY_LABELS: Record<string, string> = {
 export default function ScenarioPicker() {
   const [scenarios, setScenarios] = useState<ScenarioLibraryItem[]>([]);
   const [active, setActive] = useState<Set<string>>(new Set());
+  const [activityCounts, setActivityCounts] = useState<Record<string, number>>({});
   const [filter, setFilter] = useState<'ALL' | 'HIGH' | 'MEDIUM' | 'LOW'>('ALL');
   const [busy, setBusy] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
 
-  // 시나리오 라이브러리 + active 상태 폴링
+  // 시나리오 라이브러리 + active 상태 + 활성화 카운트 폴링
   useEffect(() => {
     let mounted = true;
     const tick = async () => {
@@ -58,6 +59,15 @@ export default function ScenarioPicker() {
           const ids = new Set<string>();
           for (const a of data.active ?? []) ids.add(a.scenario_id);
           if (mounted) setActive(ids);
+        }
+      } catch {
+        // ignore
+      }
+      try {
+        const r = await fetch(apiUrl('/api/scenarios/activity'));
+        if (r.ok) {
+          const data = await r.json();
+          if (mounted) setActivityCounts((data.counts ?? {}) as Record<string, number>);
         }
       } catch {
         // ignore
@@ -151,11 +161,21 @@ export default function ScenarioPicker() {
               >
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-[9px] font-mono font-bold text-cyan-300">{s.id}</span>
-                  <span
-                    className={`text-[7px] px-1 rounded font-mono ${severityToPill(s.severity)}`}
-                  >
-                    {s.severity[0]}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    {(activityCounts[s.id] ?? 0) > 0 && (
+                      <span
+                        className="text-[7px] px-1 rounded font-mono bg-white/10 text-white/60"
+                        title={`이 sim에서 ${activityCounts[s.id]}회 활성화`}
+                      >
+                        ×{activityCounts[s.id]}
+                      </span>
+                    )}
+                    <span
+                      className={`text-[7px] px-1 rounded font-mono ${severityToPill(s.severity)}`}
+                    >
+                      {s.severity[0]}
+                    </span>
+                  </div>
                 </div>
                 <div className="text-[9px] text-white/80 truncate font-medium">{s.name}</div>
                 <div className="ds-caption">

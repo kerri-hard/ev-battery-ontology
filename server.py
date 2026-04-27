@@ -401,6 +401,22 @@ async def replay_eval():
         return JSONResponse({"variants": [], "error": str(e)})
 
 
+@app.get("/api/scenarios/activity")
+async def scenarios_activity():
+    """시나리오별 활성화 카운트 — 다양성 가시화 (weighted random 결과)."""
+    if not hasattr(engine, "scenario_engine") or engine.scenario_engine is None:
+        return JSONResponse({"counts": {}, "total_activations": 0})
+    try:
+        counts = dict(getattr(engine.scenario_engine, "_activate_count", {}))
+        return JSONResponse({
+            "counts": counts,
+            "total_activations": sum(counts.values()),
+            "unique_scenarios_seen": len(counts),
+        })
+    except Exception as e:
+        return JSONResponse({"counts": {}, "error": str(e)})
+
+
 @app.get("/api/scenarios/library")
 async def scenarios_library():
     """시나리오 라이브러리 전체 — Sim Control Picker용."""
