@@ -21,6 +21,7 @@ import FailureChainExplorer from '@/components/learning/FailureChainExplorer';
 import TodayHeadline from '@/components/overview/TodayHeadline';
 import ActiveScenarioPanel from '@/components/scenarios/ActiveScenarioPanel';
 import NotificationCenter from '@/components/common/NotificationCenter';
+import PageIntent from '@/components/layout/PageIntent';
 import SparklineChart from '@/components/charts/SparklineChart';
 import Badge from '@/components/common/Badge';
 import { apiUrl } from '@/lib/api';
@@ -281,7 +282,7 @@ function RecoveryCasePanel() {
             const post = typeof c.post_yield === 'number' ? c.post_yield : undefined;
             const delta = pre !== undefined && post !== undefined ? post - pre : undefined;
             return (
-              <div key={c.id || `${c.step_id}-${c.timestamp}`} className="rounded border border-white/10 px-2 py-1.5">
+              <div key={c.id || `${c.step_id}-${c.timestamp}`} className="border-l-2 border-white/10 hover:border-cyan-400/40 px-2 py-1.5 transition">
                 <div className="flex items-center justify-between text-[9px] mb-0.5">
                   <span className="text-white/70 font-mono">{c.step_id}</span>
                   <span className={c.auto_recovered ? 'text-emerald-300' : 'text-red-300'}>
@@ -378,7 +379,7 @@ function OrchestratorPanel() {
           <div className="text-[10px] text-white/40">trace 없음</div>
         ) : (
           [...traces].slice(-4).reverse().map((t, i) => (
-            <div key={`trace-${i}`} className="rounded border border-white/10 px-2 py-1 text-[10px]">
+            <div key={`trace-${i}`} className="border-l-2 border-white/10 hover:border-cyan-400/40 px-2 py-1 text-[10px] transition">
               <span className="text-cyan-300">{String(t.intent || '-')}</span>
               <span className="text-white/55">{' -> '}</span>
               <span className="text-violet-300">{String(t.delegated_to || '-')}</span>
@@ -392,7 +393,7 @@ function OrchestratorPanel() {
           <div className="text-[10px] text-white/40">replay 데이터 없음</div>
         ) : (
           replay.map((r, i) => (
-            <div key={`replay-${i}`} className="rounded border border-white/10 px-2 py-1 text-[10px]">
+            <div key={`replay-${i}`} className="border-l-2 border-white/10 hover:border-cyan-400/40 px-2 py-1 text-[10px] transition">
               <div className="font-mono text-white/70">
                 conf {Number(r.min_confidence || 0).toFixed(2)} / risk {Number(r.high_risk_threshold || 0).toFixed(2)}
               </div>
@@ -412,10 +413,9 @@ function OverviewView() {
   const { metrics, prevMetrics, metricsHistory } = state;
   return (
     <div className="flex flex-col gap-2">
-      {/* 최상단 24h Headline — 5초 룰 narrative */}
+      {/* HERO: TodayHeadline 단독 — 5초 룰 narrative (KpiRibbon은 SLO view 전용) */}
       <TodayHeadline />
-      <SLOKpiRibbon />
-      {/* SLO 위반 알림 + 활성 시나리오 */}
+      {/* Supporting: 위반 알림 + 활성 시나리오 */}
       <div className="grid grid-cols-12 gap-2">
         <div className="col-span-7">
           <SLOViolationAlert />
@@ -424,6 +424,7 @@ function OverviewView() {
           <ActiveScenarioPanel />
         </div>
       </div>
+      {/* Supporting: 4 mini metric + AutonomyHero + Research */}
       <div className="grid grid-cols-12 gap-2">
         <div className="col-span-4 grid grid-cols-2 gap-1.5">
           <MiniMetric label="노드" value={metrics ? String(metrics.total_nodes) : '--'}
@@ -446,14 +447,6 @@ function OverviewView() {
           <ResearchProgressPanel />
         </div>
       </div>
-      <div className="grid grid-cols-12 gap-2 min-h-[400px]">
-        <div className="col-span-7">
-          <SLODefinitions />
-        </div>
-        <div className="col-span-5">
-          <IncidentFlowPanel />
-        </div>
-      </div>
     </div>
   );
 }
@@ -461,10 +454,9 @@ function OverviewView() {
 function HealingView() {
   return (
     <div className="flex flex-col gap-2">
-      <SLOKpiRibbon />
-      {/* 진행 중 시나리오 — Healing 맥락에서 어떤 incident가 어디서 왔는지 */}
+      {/* Supporting: 진행 중 시나리오 (KpiRibbon 제거 — SLO view 전용) */}
       <ActiveScenarioPanel />
-      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-280px)]">
+      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-240px)]">
         <div className="col-span-9 flex flex-col gap-1 min-h-0">
           <div className="text-[10px] font-bold text-purple-300/80 uppercase tracking-widest px-2">
             ② DIAGNOSE — 온톨로지 + 인과 추적 (메인)
@@ -518,11 +510,10 @@ function SLOView() {
 function LearningView() {
   return (
     <div className="flex flex-col gap-2">
-      <SLOKpiRibbon />
-      {/* 진행 중 시나리오 — Learning 맥락에서 시나리오 → 학습 신호 추적 */}
-      <ActiveScenarioPanel />
-      {/* Top: Evolution timeline (전 폭) */}
+      {/* HERO: Evolution timeline 단독 — 어제와 무엇이 달라졌나 */}
       <EvolutionTimeline />
+      {/* Supporting: 진행 중 시나리오 — 학습 신호 컨텍스트 */}
+      <ActiveScenarioPanel />
       <div className="grid grid-cols-12 gap-2">
         <div className="col-span-6 flex flex-col gap-2">
           <FailureChainExplorer />
@@ -541,8 +532,8 @@ function LearningView() {
 function ConsoleView() {
   return (
     <div className="flex flex-col gap-2">
-      <SLOKpiRibbon />
-      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-220px)]">
+      {/* Console: KpiRibbon 제거 — Raw observability 전용 (PageIntent로 충분) */}
+      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-180px)]">
         <div className="col-span-5 flex flex-col gap-2">
           <div className="glass overflow-hidden h-[300px]">
             <IncidentAnalysis />
@@ -566,14 +557,6 @@ function Dashboard() {
   const { state } = useEngine();
   const view = state.currentView ?? 'healing';
 
-  const VIEW_LABELS: Record<string, string> = {
-    overview: '🏠 Overview — 시스템 한눈',
-    healing: '🛡 Healing — Detect → Diagnose → Heal',
-    slo: '📊 SLO — SRE 모니터링',
-    learning: '🧠 Learning — 학습 / 진화 / 패턴',
-    console: '🖥 Console — Raw observability',
-  };
-
   return (
     <div className="min-h-screen flex flex-col bg-[#06060e]">
       <Header />
@@ -583,9 +566,8 @@ function Dashboard() {
         <Sidebar />
 
         <main className="flex-1 flex flex-col gap-2 p-2 overflow-auto min-h-0">
-          <div className="text-[10px] font-bold text-white/50 uppercase tracking-widest px-2 pb-1 border-b border-white/5">
-            {VIEW_LABELS[view] ?? view}
-          </div>
+          {/* PageIntent — 페이지마다 다른 한 질문 + supporting context */}
+          <PageIntent view={view} />
           {view === 'overview' && <OverviewView />}
           {view === 'healing' && <HealingView />}
           {view === 'slo' && <SLOView />}
