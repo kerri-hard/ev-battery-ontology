@@ -6,6 +6,12 @@ on:
       - 'src/v4/**'
       - 'scripts/backtest*.py'
       - 'data/**'
+  push:
+    branches: [main]
+    paths:
+      - 'src/v4/**'
+      - 'scripts/backtest*.py'
+      - 'data/**'
   workflow_dispatch:
 
 jobs:
