@@ -2,6 +2,7 @@
 
 import { useEngine } from '@/context/EngineContext';
 import { EmptyState } from '@/components/common/StateMessages';
+import SparklineChart from '@/components/charts/SparklineChart';
 
 export default function PreverifyPanel() {
   const { state } = useEngine();
@@ -45,6 +46,7 @@ export default function PreverifyPanel() {
       </div>
 
       <ThresholdRow thresholds={pv.current_thresholds} />
+      <ThresholdSparklines history={pv.thresholds_history ?? []} />
 
       <div className="text-[9px] text-white/45 mb-1 mt-2">Latest Plans (top 4)</div>
       <div className="space-y-1 max-h-[120px] overflow-y-auto pr-1">
@@ -87,6 +89,32 @@ function ThresholdRow({ thresholds }: { thresholds: Record<string, number> }) {
           </span>
         );
       })}
+    </div>
+  );
+}
+
+/** Threshold A/B/C 진화 sparkline — EvolutionAgent가 자가 진화한 임계값 시계열 가시화 */
+function ThresholdSparklines({
+  history,
+}: {
+  history: Array<{ iteration: number; A: number; B: number; C: number }>;
+}) {
+  if (!history || history.length < 2) return null;
+  const seriesA = history.map((p) => p.A);
+  const seriesB = history.map((p) => p.B);
+  const seriesC = history.map((p) => p.C);
+  return (
+    <div className="grid grid-cols-3 gap-2 py-1.5 border-b border-white/5">
+      {[
+        { label: 'A', data: seriesA, color: 'var(--color-danger)' },
+        { label: 'B', data: seriesB, color: 'var(--color-warning)' },
+        { label: 'C', data: seriesC, color: 'var(--color-success)' },
+      ].map((s) => (
+        <div key={s.label} className="flex flex-col items-center">
+          <div className="text-[8px] text-white/40 mb-0.5">{s.label} 진화 ({history.length} iter)</div>
+          <SparklineChart data={s.data} color={s.color} width={70} height={18} />
+        </div>
+      ))}
     </div>
   );
 }

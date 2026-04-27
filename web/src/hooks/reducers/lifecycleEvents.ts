@@ -43,6 +43,7 @@ function mergePreverifyMetrics(
     plans_total: Number(raw.plans_total ?? 0),
     auto_reject_rate: Number(raw.auto_reject_rate ?? 0),
     current_thresholds: (raw.current_thresholds as Record<string, number>) ?? prev?.current_thresholds ?? {},
+    thresholds_history: (raw.thresholds_history as PreverifyState['thresholds_history']) ?? prev?.thresholds_history,
   };
 }
 

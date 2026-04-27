@@ -88,6 +88,7 @@ class StateMixin:
             "auto_reject_rate": round(rejected_total / plans_total, 4) if plans_total else 0.0,
             "recent_predictions": recent[-10:],
             "current_thresholds": dict(getattr(self, "preverify_thresholds", {})),
+            "thresholds_history": list(getattr(self, "preverify_thresholds_history", [])),
         }
 
     # ── SLO/SLI ─────────────────────────────────

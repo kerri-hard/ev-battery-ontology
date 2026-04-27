@@ -526,6 +526,7 @@ export interface PreverifyState {
   plans_total: number;
   auto_reject_rate: number;
   current_thresholds: Record<string, number>;
+  thresholds_history?: Array<{ iteration: number; A: number; B: number; C: number }>;
 }
 
 // ── Scenario ──

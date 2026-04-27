@@ -86,6 +86,8 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
         self.preverify_accuracy_history: list = []
         self.preverify_counters = {"plans_total": 0, "auto_rejected_total": 0}
         self.preverify_thresholds = {"A": 1e-4, "B": 0.0, "C": -1e-3}
+        # Threshold 시계열 — EvolutionAgent 진화 추적
+        self.preverify_thresholds_history: list = []
         # Anti-recurrence — VISION 9.5: 같은 (step, anomaly, cause) 재발 시 다른 액션 강제
         # tracker[(step, anomaly, cause)] = {count, tried_actions: set, last_success: bool}
         self.recurrence_tracker: dict = {}
@@ -179,6 +181,7 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
         self.preverify_accuracy_history = []
         self.preverify_counters = {"plans_total": 0, "auto_rejected_total": 0}
         self.preverify_thresholds = {"A": 1e-4, "B": 0.0, "C": -1e-3}
+        self.preverify_thresholds_history = []
         self.recurrence_tracker = {}
 
     def _load_persisted_policy(self):
@@ -219,6 +222,15 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
             )
 
             await self._run_periodic(it, recover_out["recovery_results"])
+            # Threshold 시계열 누적 — EvolutionAgent가 변경한 임계값을 매 iter 기록
+            self.preverify_thresholds_history.append({
+                "iteration": it + 1,
+                "A": float(self.preverify_thresholds.get("A", 0.0)),
+                "B": float(self.preverify_thresholds.get("B", 0.0)),
+                "C": float(self.preverify_thresholds.get("C", 0.0)),
+            })
+            if len(self.preverify_thresholds_history) > 60:
+                self.preverify_thresholds_history = self.preverify_thresholds_history[-60:]
             self._persist_healing_summary()
 
         except Exception as exc:
