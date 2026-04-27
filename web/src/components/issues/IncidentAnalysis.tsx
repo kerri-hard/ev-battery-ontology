@@ -2,26 +2,23 @@
 
 import React, { useMemo, useState } from 'react';
 import { useEngine } from '@/context/EngineContext';
+import { severityToColor } from '@/components/common/severityColors';
+import { EmptyState } from '@/components/common/StateMessages';
 import type { HealingIncident } from '@/types';
 
 /* ── Agent display config ── */
 const AGENT_META: Record<string, { label: string; color: string; icon: string }> = {
-  AnomalyDetector:    { label: 'AnomalyDetector',    color: '#ef4444', icon: '\u2460' },
-  RootCauseAnalyzer:  { label: 'RootCauseAnalyzer',  color: '#f59e0b', icon: '\u2461' },
-  CausalReasoner:     { label: 'CausalReasoner',     color: '#8b5cf6', icon: '\u2462' },
-  CorrelationAnalyzer:{ label: 'CorrelationAnalyzer', color: '#00d2ff', icon: '\u2463' },
-  CrossInvestigator:  { label: 'CrossInvestigator',   color: '#10b981', icon: '\u2464' },
-  AutoRecovery:       { label: 'AutoRecovery',        color: '#06d6a0', icon: '\u2465' },
+  AnomalyDetector:    { label: 'AnomalyDetector',    color: 'var(--color-danger)', icon: '\u2460' },
+  RootCauseAnalyzer:  { label: 'RootCauseAnalyzer',  color: 'var(--color-warning)', icon: '\u2461' },
+  CausalReasoner:     { label: 'CausalReasoner',     color: 'var(--color-meta)', icon: '\u2462' },
+  CorrelationAnalyzer:{ label: 'CorrelationAnalyzer', color: 'var(--color-info)', icon: '\u2463' },
+  CrossInvestigator:  { label: 'CrossInvestigator',   color: 'var(--color-success)', icon: '\u2464' },
+  AutoRecovery:       { label: 'AutoRecovery',        color: 'var(--color-success)', icon: '\u2465' },
 };
 
+/** 외부 통합 함수에 위임 — severity → CSS 변수 색상 (semantic 토큰) */
 function severityColor(severity: string | undefined): string {
-  switch (severity?.toUpperCase()) {
-    case 'CRITICAL': return '#ef4444';
-    case 'HIGH':     return '#f59e0b';
-    case 'WARNING':  return '#f59e0b';
-    case 'MEDIUM':   return '#00d2ff';
-    default:         return '#6b7280';
-  }
+  return severityToColor(severity?.toUpperCase());
 }
 
 /* ── Collapsible section ── */
@@ -173,10 +170,12 @@ function IncidentAnalysis() {
   /* ── Empty state ── */
   if (!incident) {
     return (
-      <div className="flex flex-col h-full items-center justify-center px-4">
-        <div className="text-[11px] text-white/30 text-center leading-relaxed">
-          시뮬레이션을 시작하면 장애 분석 리포트가 여기에 표시됩니다
-        </div>
+      <div className="flex flex-col h-full items-center justify-center">
+        <EmptyState
+          icon="📋"
+          title="장애 분석 리포트 대기 중"
+          hint="시뮬레이션이 시작되면 6개 에이전트의 진단·복구·학습 리포트가 표시됩니다"
+        />
       </div>
     );
   }

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useEngine } from '@/context/EngineContext';
 import GlassCard from '@/components/common/GlassCard';
+import { EmptyState } from '@/components/common/StateMessages';
 import type { MicroserviceSLI, AreaSLI } from '@/types';
 
 const AREA_NAMES: Record<string, string> = {
@@ -22,7 +23,11 @@ export default function MicroservicePanel() {
   if (!slo || slo.per_step.length === 0) {
     return (
       <GlassCard>
-        <div className="text-[10px] text-white/40">아직 incident 데이터 없음 — sim 실행 필요</div>
+        <EmptyState
+          icon="📊"
+          title="incident 데이터 누적 중"
+          hint="시나리오가 활성화되면 step별 SLI가 채워집니다 — Sidebar의 Sim Control에서 강제 트리거 가능"
+        />
       </GlassCard>
     );
   }

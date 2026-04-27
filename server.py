@@ -401,6 +401,50 @@ async def replay_eval():
         return JSONResponse({"variants": [], "error": str(e)})
 
 
+@app.get("/api/scenarios/library")
+async def scenarios_library():
+    """시나리오 라이브러리 전체 — Sim Control Picker용."""
+    if not hasattr(engine, "scenario_engine") or engine.scenario_engine is None:
+        return JSONResponse({"scenarios": [], "total_library": 0, "active_count": 0})
+    try:
+        lib = engine.scenario_engine.get_scenario_library()
+        active = engine.scenario_engine.get_active_scenarios()
+        return JSONResponse({
+            "scenarios": [
+                {
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "description": s.get("description"),
+                    "category": s.get("category"),
+                    "severity": s.get("severity"),
+                    "root_cause": s.get("root_cause"),
+                }
+                for s in lib
+            ],
+            "total_library": len(lib),
+            "active_count": len(active),
+        })
+    except Exception as e:
+        return JSONResponse({"scenarios": [], "error": str(e)})
+
+
+@app.post("/api/scenarios/trigger")
+async def trigger_scenario(req: dict):
+    """특정 scenario_id를 강제 활성화. 운영자 통제권 — Sim Control UI에서 호출."""
+    if not hasattr(engine, "scenario_engine") or engine.scenario_engine is None:
+        return JSONResponse({"error": "scenario_engine 미초기화"}, status_code=400)
+    sid = req.get("scenario_id")
+    if not sid:
+        return JSONResponse({"error": "scenario_id 누락"}, status_code=400)
+    try:
+        result = engine.scenario_engine.activate_scenario(sid)
+        if result is None:
+            return JSONResponse({"error": f"활성화 실패 (이미 활성/쿨다운 또는 미정의: {sid})"}, status_code=400)
+        return JSONResponse({"status": "activated", "scenario": result})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/api/active-scenarios")
 async def active_scenarios():
     """진행 중인 시나리오 + 라이브러리 통계."""

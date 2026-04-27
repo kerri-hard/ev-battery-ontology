@@ -20,6 +20,7 @@ import EvolutionTimeline from '@/components/learning/EvolutionTimeline';
 import FailureChainExplorer from '@/components/learning/FailureChainExplorer';
 import TodayHeadline from '@/components/overview/TodayHeadline';
 import ActiveScenarioPanel from '@/components/scenarios/ActiveScenarioPanel';
+import NotificationCenter from '@/components/common/NotificationCenter';
 import SparklineChart from '@/components/charts/SparklineChart';
 import Badge from '@/components/common/Badge';
 import { apiUrl } from '@/lib/api';
@@ -576,6 +577,7 @@ function Dashboard() {
   return (
     <div className="min-h-screen flex flex-col bg-[#06060e]">
       <Header />
+      <NotificationCenter />
 
       <div className="flex flex-1 overflow-auto pt-14 min-h-0">
         <Sidebar />

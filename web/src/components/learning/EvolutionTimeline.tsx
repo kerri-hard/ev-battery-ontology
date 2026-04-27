@@ -3,6 +3,7 @@
 import { useEngine } from '@/context/EngineContext';
 import GlassCard from '@/components/common/GlassCard';
 import SparklineChart from '@/components/charts/SparklineChart';
+import { LoadingState } from '@/components/common/StateMessages';
 
 interface StrategyRow {
   name: string;
@@ -32,7 +33,7 @@ export default function EvolutionTimeline() {
   if (!ev || !ev.strategies) {
     return (
       <GlassCard>
-        <div className="text-[10px] text-white/40">EvolutionAgent 데이터 대기 중...</div>
+        <LoadingState label="EvolutionAgent 사이클 데이터 누적 중..." />
       </GlassCard>
     );
   }

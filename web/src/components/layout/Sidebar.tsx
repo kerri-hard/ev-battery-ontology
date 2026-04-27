@@ -5,6 +5,7 @@ import GlassCard from '@/components/common/GlassCard';
 import ControlPanel from '@/components/controls/ControlPanel';
 import SidebarMetrics from '@/components/metrics/SidebarMetrics';
 import AgentList from '@/components/agents/AgentList';
+import ScenarioPicker from '@/components/scenarios/ScenarioPicker';
 import type { ViewKey } from '@/types';
 
 const NAV_ITEMS: { key: ViewKey; label: string; icon: string; desc: string }[] = [
@@ -53,6 +54,9 @@ export default function Sidebar() {
       <GlassCard>
         <ControlPanel />
       </GlassCard>
+
+      {/* Sim Control — 시나리오 강제 트리거 */}
+      <ScenarioPicker />
 
       <GlassCard>
         <SidebarMetrics />

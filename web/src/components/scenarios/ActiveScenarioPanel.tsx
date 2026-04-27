@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { apiUrl } from '@/lib/api';
 import { useEngine } from '@/context/EngineContext';
 import GlassCard from '@/components/common/GlassCard';
+import { LoadingState } from '@/components/common/StateMessages';
 import type { ActiveScenario, ScenarioStatus } from '@/types';
 
 /** 진행 중 시나리오 + 라이브러리 통계 — Healing/Learning view에 표시 */
@@ -33,7 +34,7 @@ export default function ActiveScenarioPanel() {
   if (!data) {
     return (
       <GlassCard>
-        <div className="ds-caption text-white/40">시나리오 데이터 대기 중...</div>
+        <LoadingState label="시나리오 라이브러리 로딩..." />
       </GlassCard>
     );
   }

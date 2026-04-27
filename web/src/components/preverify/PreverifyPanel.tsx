@@ -1,6 +1,7 @@
 'use client';
 
 import { useEngine } from '@/context/EngineContext';
+import { EmptyState } from '@/components/common/StateMessages';
 
 export default function PreverifyPanel() {
   const { state } = useEngine();
@@ -9,10 +10,12 @@ export default function PreverifyPanel() {
   if (!pv) {
     return (
       <div className="glass p-2.5">
-        <div className="text-[10px] font-bold text-white/70 uppercase tracking-wider mb-1.5">
-          Pre-verify
-        </div>
-        <div className="text-[10px] text-white/40">데이터 없음 (시뮬레이션 단계 대기)</div>
+        <div className="ds-label mb-1.5">Pre-verify</div>
+        <EmptyState
+          icon="🔬"
+          title="PRE-VERIFY 대기"
+          hint="시뮬레이션 시작 후 액션 전 가상 검증 결과가 표시됩니다"
+        />
       </div>
     );
   }
