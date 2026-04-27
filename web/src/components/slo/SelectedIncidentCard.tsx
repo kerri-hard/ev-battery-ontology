@@ -2,11 +2,17 @@
 
 import { useEngine } from '@/context/EngineContext';
 import GlassCard from '@/components/common/GlassCard';
-import type { HealingIncident } from '@/types';
+import { EmptyState } from '@/components/common/StateMessages';
+import {
+  severityToPill,
+  severityShort,
+  statusToPill,
+} from '@/components/common/severityColors';
+import type { HealingIncident, RecurrenceSignature } from '@/types';
 
-/** 선택된 incident의 진단/PRE-VERIFY/복구/검증/학습 풀스토리 */
+/** 선택된 incident의 진단/PRE-VERIFY/복구/검증/학습 풀스토리 + HITL inline action */
 export default function SelectedIncidentCard() {
-  const { state, selectIncident } = useEngine();
+  const { state, selectIncident, sendCommand } = useEngine();
   const id = state.selectedIncidentId;
   const incidents = state.healing?.recentIncidents ?? [];
   const inc = id ? incidents.find((i) => i.id === id) : incidents[incidents.length - 1];
@@ -15,26 +21,55 @@ export default function SelectedIncidentCard() {
     return (
       <GlassCard>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-bold text-white/60 uppercase tracking-wider">
-            Heal Lane
-          </span>
+          <span className="ds-label">Heal Lane</span>
         </div>
-        <div className="text-[10px] text-white/40 px-2 py-6 text-center">
-          incident 선택 안됨 — Detect lane에서 클릭
-        </div>
+        <EmptyState
+          icon="🛡"
+          title="incident 미선택"
+          hint="Detect lane에서 incident를 클릭하세요. 클릭하지 않으면 가장 최근 incident가 자동 표시됩니다."
+        />
       </GlassCard>
     );
   }
 
+  // 과거 동일 시그니처 추적 (recurrence_tracker)
+  const recSig = findMatchingRecurrence(inc, state.recurrence?.top_signatures ?? []);
+
   return (
     <GlassCard className="p-3 overflow-y-auto">
       <Header inc={inc} onClear={() => selectIncident(null)} hasSelection={!!id} />
+      {/* 과거 시그니처 inline (FailureChainExplorer 발췌) */}
+      {recSig && <RecurrenceInline rec={recSig} />}
+      {/* HITL inline action */}
+      {inc.hitl_required && inc.hitl_id && (
+        <HitlActions
+          hitlId={inc.hitl_id}
+          onApprove={() =>
+            sendCommand({ cmd: 'hitl_approve', id: inc.hitl_id!, operator: 'operator-ui' })
+          }
+          onReject={() =>
+            sendCommand({ cmd: 'hitl_reject', id: inc.hitl_id!, operator: 'operator-ui' })
+          }
+        />
+      )}
       <DiagnoseSection inc={inc} />
       <PreVerifySection inc={inc} />
       <RecoverSection inc={inc} />
       <VerifySection inc={inc} />
       <LearnSection inc={inc} />
     </GlassCard>
+  );
+}
+
+function findMatchingRecurrence(
+  inc: HealingIncident,
+  sigs: RecurrenceSignature[],
+): RecurrenceSignature | undefined {
+  return sigs.find(
+    (s) =>
+      s.step_id === inc.step_id &&
+      s.anomaly_type === inc.anomaly_type &&
+      s.cause_type === (inc.top_cause ?? ''),
   );
 }
 
@@ -51,31 +86,101 @@ function Header({
     <div className="border-b border-white/10 pb-2 mb-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-bold text-white/60 uppercase tracking-wider">
-            {hasSelection ? 'Selected' : 'Latest'} Incident
-          </span>
+          <span className="ds-label">{hasSelection ? 'Selected' : 'Latest'} Incident</span>
           <span className="text-[11px] font-mono font-bold text-cyan-300">{inc.id}</span>
-          <SeverityPill sev={inc.severity} />
+          {inc.severity && (
+            <span
+              className={`text-[8px] px-1 py-0.5 rounded font-mono ${severityToPill(inc.severity)}`}
+              title={inc.severity}
+            >
+              {severityShort(inc.severity)}
+            </span>
+          )}
         </div>
         {hasSelection && (
           <button
             onClick={onClear}
-            className="text-[9px] text-white/30 hover:text-white/60 px-1"
+            className="ds-caption hover:text-white/80 px-1"
           >
             ✕ 해제
           </button>
         )}
       </div>
       <div className="flex items-center gap-2 mt-1.5">
-        <span className="text-[10px] font-mono text-white/80">{inc.step_id}</span>
-        <span className="text-[9px] text-white/40">
+        <span className="ds-body font-mono">{inc.step_id}</span>
+        <span className="ds-caption">
           iter {inc.iteration ?? '?'} · {parseTime(inc.timestamp)}
         </span>
         {inc.history_matched && (
-          <span className="text-[8px] px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono">
+          <span className="text-[8px] px-1 py-0.5 rounded pill-info font-mono">
             ✓ pattern matched
           </span>
         )}
+      </div>
+    </div>
+  );
+}
+
+function RecurrenceInline({ rec }: { rec: RecurrenceSignature }) {
+  return (
+    <div className="mb-2 px-2 py-1.5 rounded bg-white/[0.03] border-l-2 border-purple-400/40">
+      <div className="ds-label text-purple-300 mb-0.5">📈 과거 동일 시그니처</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="ds-caption">
+          {rec.count}회 반복 ·{' '}
+          {rec.tried_actions.length === 0
+            ? '액션 없음'
+            : `시도: ${rec.tried_actions.join(', ')}`}
+        </div>
+        <span
+          className={`text-[8px] px-1 py-0.5 rounded font-mono ${
+            rec.last_success ? 'pill-success' : 'pill-danger'
+          }`}
+        >
+          {rec.last_success ? '마지막 ✓' : '마지막 ✗'}
+        </span>
+      </div>
+      {rec.count >= 3 && rec.tried_actions.length >= 2 && !rec.last_success && (
+        <div className="ds-caption text-rose-300 mt-1">
+          ⚠ {rec.count}회 + {rec.tried_actions.length}액션 시도 후도 실패 — ESCALATE 임박
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HitlActions({
+  hitlId,
+  onApprove,
+  onReject,
+}: {
+  hitlId: string;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <div className="mb-2 px-2 py-2 rounded pill-warning">
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <div>
+          <div className="ds-body font-bold">⏸ HITL 승인 대기</div>
+          <div className="ds-caption font-mono">{hitlId}</div>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={onApprove}
+          className="flex-1 px-2 py-1 rounded pill-success hover:opacity-90 transition text-[11px] font-bold"
+          title="자동 복구 액션 승인"
+        >
+          ✓ 승인
+        </button>
+        <button
+          onClick={onReject}
+          className="flex-1 px-2 py-1 rounded pill-danger hover:opacity-90 transition text-[11px] font-bold"
+          title="액션 거부 (ESCALATE)"
+        >
+          ✗ 거부
+        </button>
       </div>
     </div>
   );
@@ -90,19 +195,13 @@ function DiagnoseSection({ inc }: { inc: HealingIncident }) {
       <KV k="후보 수" v={String(inc.candidates_count ?? '?')} />
       {inc.causal_chain && (
         <div className="mt-1 px-1.5 py-1 rounded bg-purple-500/10 border-l-2 border-purple-400">
-          <div className="text-[8px] uppercase tracking-wider text-purple-300/70">
-            인과 체인
-          </div>
-          <div className="text-[10px] text-purple-100 mt-0.5">{inc.causal_chain}</div>
+          <div className="ds-label text-purple-300/70">인과 체인</div>
+          <div className="ds-body text-purple-100 mt-0.5">{inc.causal_chain}</div>
         </div>
       )}
-      {inc.matched_pattern_type && (
-        <KV k="패턴" v={inc.matched_pattern_type} />
-      )}
+      {inc.matched_pattern_type && <KV k="패턴" v={inc.matched_pattern_type} />}
       {inc.evidence_refs && inc.evidence_refs.length > 0 && (
-        <div className="text-[8px] text-white/40 mt-1 font-mono">
-          증거: {inc.evidence_refs.slice(0, 3).join(' · ')}
-        </div>
+        <div className="ds-caption mt-1">증거: {inc.evidence_refs.slice(0, 3).join(' · ')}</div>
       )}
     </Section>
   );
@@ -113,11 +212,9 @@ function PreVerifySection({ inc }: { inc: HealingIncident }) {
   return (
     <Section title="② PRE-VERIFY" phase="PRE-VERIFY" status={rejected ? 'rejected' : 'pass'}>
       {rejected ? (
-        <div className="text-[10px] text-amber-300">{inc.escalation_reason}</div>
+        <div className="ds-body text-amber-300">{inc.escalation_reason}</div>
       ) : (
-        <div className="text-[10px] text-emerald-300/80">
-          시뮬레이션 통과 — anti-recurrence 정책 적용
-        </div>
+        <div className="ds-body text-emerald-300/80">시뮬레이션 통과 — anti-recurrence 정책 적용</div>
       )}
     </Section>
   );
@@ -131,14 +228,11 @@ function RecoverSection({ inc }: { inc: HealingIncident }) {
       <KV k="위험도" v={inc.risk_level || '?'} />
       <KV k="플레이북" v={inc.playbook_id || '?'} />
       {inc.recovery_time_sec !== undefined && (
-        <KV
-          k="실행 시간"
-          v={`${(inc.recovery_time_sec * 1000).toFixed(1)}ms`}
-        />
+        <KV k="실행 시간" v={`${(inc.recovery_time_sec * 1000).toFixed(1)}ms`} />
       )}
       {inc.hitl_required && (
-        <div className="mt-1 px-1.5 py-1 rounded bg-amber-500/10 border-l-2 border-amber-400">
-          <div className="text-[9px] text-amber-200">HITL 게이트 — 운영자 승인 대기</div>
+        <div className="mt-1 px-1.5 py-1 rounded pill-warning">
+          <div className="ds-caption">HITL 게이트 — 운영자 승인 대기 (위 버튼)</div>
         </div>
       )}
     </Section>
@@ -151,19 +245,11 @@ function VerifySection({ inc }: { inc: HealingIncident }) {
       ? inc.post_yield - inc.pre_yield
       : null;
   return (
-    <Section
-      title="④ 검증"
-      phase="VERIFY"
-      status={inc.improved ? 'success' : 'fail'}
-    >
+    <Section title="④ 검증" phase="VERIFY" status={inc.improved ? 'success' : 'fail'}>
       {inc.pre_yield !== undefined && (
         <>
           <KV k="pre yield" v={`${(inc.pre_yield * 100).toFixed(2)}%`} />
-          <KV
-            k="post yield"
-            v={`${((inc.post_yield ?? 0) * 100).toFixed(2)}%`}
-            highlight
-          />
+          <KV k="post yield" v={`${((inc.post_yield ?? 0) * 100).toFixed(2)}%`} highlight />
           {delta !== null && (
             <KV
               k="Δ yield"
@@ -174,7 +260,7 @@ function VerifySection({ inc }: { inc: HealingIncident }) {
         </>
       )}
       {!inc.improved && (
-        <div className="text-[10px] text-rose-300/80 mt-1">
+        <div className="ds-body text-rose-300/80 mt-1">
           개선 미감지 — 다음 사이클에 anti-recurrence가 다른 액션 강제
         </div>
       )}
@@ -185,16 +271,12 @@ function VerifySection({ inc }: { inc: HealingIncident }) {
 function LearnSection({ inc }: { inc: HealingIncident }) {
   return (
     <Section title="⑤ 학습" phase="LEARN" status="success">
-      <div className="text-[9px] text-white/60">
+      <div className="ds-caption">
         FailureChain {inc.matched_chain_id ? `매칭 (${inc.matched_chain_id})` : '신규 생성'}
       </div>
-      <div className="text-[9px] text-white/50">
-        recurrence_tracker 갱신 + L3 그래프 강화
-      </div>
+      <div className="ds-caption">recurrence_tracker 갱신 + L3 그래프 강화</div>
       {inc.playbook_source && (
-        <div className="text-[8px] text-white/40 font-mono mt-1">
-          playbook source: {inc.playbook_source}
-        </div>
+        <div className="ds-caption mt-1">playbook source: {inc.playbook_source}</div>
       )}
     </Section>
   );
@@ -211,20 +293,12 @@ function Section({
   status?: 'success' | 'fail' | 'escalate' | 'rejected' | 'pass';
   children: React.ReactNode;
 }) {
-  const colors: Record<string, string> = {
-    success: 'border-emerald-400/40 bg-emerald-950/20',
-    pass: 'border-emerald-400/40 bg-emerald-950/20',
-    fail: 'border-rose-400/40 bg-rose-950/20',
-    escalate: 'border-amber-400/40 bg-amber-950/20',
-    rejected: 'border-amber-400/40 bg-amber-950/20',
-  };
+  const pillCls = statusToPill(status);
   return (
-    <div className={`border-l-2 pl-2 py-1 mb-1.5 ${colors[status]}`}>
+    <div className={`border-l-2 pl-2 py-1 mb-1.5 rounded ${pillCls} border-current/40`}>
       <div className="flex items-center gap-1.5 mb-0.5">
-        <span className="text-[10px] font-bold text-white/80">{title}</span>
-        <span className="text-[7px] px-1 rounded bg-white/10 text-white/50 font-mono">
-          {phase}
-        </span>
+        <span className="ds-body font-bold">{title}</span>
+        <span className="text-[7px] px-1 rounded bg-white/10 text-white/50 font-mono">{phase}</span>
       </div>
       <div className="space-y-0.5">{children}</div>
     </div>
@@ -234,30 +308,11 @@ function Section({
 function KV({ k, v, highlight = false }: { k: string; v: string; highlight?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[9px] text-white/40">{k}</span>
-      <span
-        className={`text-[10px] font-mono ${
-          highlight ? 'text-cyan-200 font-bold' : 'text-white/80'
-        }`}
-      >
+      <span className="ds-caption">{k}</span>
+      <span className={`text-[10px] font-mono ${highlight ? 'text-cyan-200 font-bold' : 'text-white/80'}`}>
         {v}
       </span>
     </div>
-  );
-}
-
-function SeverityPill({ sev }: { sev?: string }) {
-  if (!sev) return null;
-  const colors: Record<string, string> = {
-    CRITICAL: 'bg-rose-600/40 text-rose-200',
-    HIGH: 'bg-orange-500/40 text-orange-200',
-    MEDIUM: 'bg-amber-500/40 text-amber-200',
-    LOW: 'bg-emerald-500/40 text-emerald-200',
-  };
-  return (
-    <span className={`text-[8px] px-1 py-0.5 rounded font-mono ${colors[sev] || 'bg-white/10'}`}>
-      {sev}
-    </span>
   );
 }
 
