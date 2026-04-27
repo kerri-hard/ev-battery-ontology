@@ -18,6 +18,7 @@ import SLOSparklines from '@/components/slo/SLOSparklines';
 import SLOViolationAlert from '@/components/slo/SLOViolationAlert';
 import EvolutionTimeline from '@/components/learning/EvolutionTimeline';
 import FailureChainExplorer from '@/components/learning/FailureChainExplorer';
+import CausalChainTracer from '@/components/learning/CausalChainTracer';
 import TodayHeadline from '@/components/overview/TodayHeadline';
 import ActiveScenarioPanel from '@/components/scenarios/ActiveScenarioPanel';
 import NotificationCenter from '@/components/common/NotificationCenter';
@@ -597,6 +598,7 @@ function LearningView() {
       {/* Learning grid — 모바일 stack */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
         <div className="md:col-span-6 flex flex-col gap-2">
+          <CausalChainTracer />
           <FailureChainExplorer />
           <RecurrencePanel />
         </div>
