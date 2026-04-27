@@ -14,6 +14,10 @@ import MicroservicePanel from '@/components/slo/MicroservicePanel';
 import IncidentFlowPanel from '@/components/slo/IncidentFlowPanel';
 import SLOKpiRibbon from '@/components/slo/SLOKpiRibbon';
 import SelectedIncidentCard from '@/components/slo/SelectedIncidentCard';
+import SLOSparklines from '@/components/slo/SLOSparklines';
+import SLOViolationAlert from '@/components/slo/SLOViolationAlert';
+import EvolutionTimeline from '@/components/learning/EvolutionTimeline';
+import FailureChainExplorer from '@/components/learning/FailureChainExplorer';
 import SparklineChart from '@/components/charts/SparklineChart';
 import Badge from '@/components/common/Badge';
 import { apiUrl } from '@/lib/api';
@@ -406,6 +410,8 @@ function OverviewView() {
   return (
     <div className="flex flex-col gap-2">
       <SLOKpiRibbon />
+      {/* SLO 위반 알림 — 핵심 강조 */}
+      <SLOViolationAlert />
       <div className="grid grid-cols-12 gap-2">
         <div className="col-span-4 grid grid-cols-2 gap-1.5">
           <MiniMetric label="노드" value={metrics ? String(metrics.total_nodes) : '--'}
@@ -480,7 +486,10 @@ function SLOView() {
   return (
     <div className="flex flex-col gap-2">
       <SLOKpiRibbon />
-      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-220px)]">
+      <SLOViolationAlert />
+      {/* 시계열 sparkline + burn rate */}
+      <SLOSparklines />
+      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-440px)]">
         <div className="col-span-4 overflow-auto">
           <SLODefinitions />
         </div>
@@ -496,12 +505,15 @@ function LearningView() {
   return (
     <div className="flex flex-col gap-2">
       <SLOKpiRibbon />
+      {/* Top: Evolution timeline (전 폭) */}
+      <EvolutionTimeline />
       <div className="grid grid-cols-12 gap-2">
         <div className="col-span-6 flex flex-col gap-2">
+          <FailureChainExplorer />
           <RecurrencePanel />
-          <PreverifyPanel />
         </div>
         <div className="col-span-6 flex flex-col gap-2">
+          <PreverifyPanel />
           <ResearchProgressPanel />
           <AutonomyHero />
         </div>

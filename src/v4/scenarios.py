@@ -351,6 +351,135 @@ SCENARIO_LIBRARY: list[dict[str, Any]] = [
         "root_cause": "environmental_temperature",
         "expected_yield_impact": -0.025,
     },
+    # ─────────────────────────────────────────────────────────────────
+    # 다양성 강화 시나리오 (severity 균형 + 외부 disruption + 시간대 변동)
+    # ─────────────────────────────────────────────────────────────────
+    {
+        "id": "SCN-009",
+        "name": "자재 LOT 변경 — 신규 셀 입고",
+        "description": (
+            "공급사 LOT 교체로 셀 두께/내부저항 분포가 미세하게 변경. "
+            "초기 입고 검사부터 모듈 조립까지 부드러운 편차로 전파. "
+            "외부(공급망)에서 유입되는 disruption."
+        ),
+        "category": "external",
+        "severity": "MEDIUM",
+        "affected_steps": [
+            {"step_id": "PS-101", "sensor": "thickness", "severity": 2, "delay_ticks": 0},
+            {"step_id": "PS-102", "sensor": "alignment", "severity": 1, "delay_ticks": 1,
+             "drift_per_tick": 0.005},
+            {"step_id": "PS-104", "sensor": "current", "severity": 1, "delay_ticks": 3,
+             "drift_per_tick": 0.003},
+        ],
+        "root_cause": "material_lot_change",
+        "expected_yield_impact": -0.012,
+    },
+    {
+        "id": "SCN-010",
+        "name": "야간 운영 저강도 변동",
+        "description": (
+            "야간 무인 운영 시 기온 하강으로 모든 센서가 약하게 drift. "
+            "공정 영향은 미미하지만 검출 임계 근처에서 oscillate."
+        ),
+        "category": "environmental",
+        "severity": "LOW",
+        "affected_steps": [
+            {"step_id": "PS-301", "sensor": "temperature", "severity": 1, "delay_ticks": 0,
+             "drift_per_tick": 0.002},
+            {"step_id": "PS-401", "sensor": "temperature", "severity": 1, "delay_ticks": 0,
+             "drift_per_tick": 0.002},
+            {"step_id": "PS-503", "sensor": "temperature", "severity": 1, "delay_ticks": 0,
+             "drift_per_tick": 0.002},
+        ],
+        "root_cause": "environmental_temperature",
+        "expected_yield_impact": -0.003,
+    },
+    {
+        "id": "SCN-011",
+        "name": "교대 인계 트랜지션",
+        "description": (
+            "교대 시점에 일부 라인이 일시적 idle → restart로 setpoint 재정렬. "
+            "짧은 기간(2~3 tick) LOW severity 이상이 다중 영역에 동시 발생."
+        ),
+        "category": "transient",
+        "severity": "LOW",
+        "affected_steps": [
+            {"step_id": "PS-105", "sensor": "speed", "severity": 1, "delay_ticks": 0},
+            {"step_id": "PS-202", "sensor": "current", "severity": 1, "delay_ticks": 1},
+            {"step_id": "PS-501", "sensor": "torque_force", "severity": 1, "delay_ticks": 1},
+        ],
+        "root_cause": "shift_transition",
+        "expected_yield_impact": -0.005,
+    },
+    {
+        "id": "SCN-012",
+        "name": "다영역 동시 장애 — 자재+공조 복합",
+        "description": (
+            "자재 LOT 편차와 공조 출력 저하가 동시 발생하여 5개 공정 영역에 "
+            "동시 영향. 단일 인과로 설명 불가능한 multi-root 시나리오."
+        ),
+        "category": "multi_root",
+        "severity": "HIGH",
+        "affected_steps": [
+            {"step_id": "PS-101", "sensor": "thickness", "severity": 2, "delay_ticks": 0},
+            {"step_id": "PS-203", "sensor": "torque_force", "severity": 2, "delay_ticks": 1},
+            {"step_id": "PS-301", "sensor": "temperature", "severity": 2, "delay_ticks": 1},
+            {"step_id": "PS-404", "sensor": "humidity", "severity": 2, "delay_ticks": 2},
+            {"step_id": "PS-505", "sensor": "alignment", "severity": 1, "delay_ticks": 3},
+        ],
+        "root_cause": "multi_root_complex",
+        "expected_yield_impact": -0.030,
+    },
+    {
+        "id": "SCN-013",
+        "name": "장비 누적 마모 — 베어링 drift",
+        "description": (
+            "고속 회전 장비의 베어링이 정비주기 후반 진입. "
+            "vibration/torque 점진적 drift, MTBF 임계 접근 시그널."
+        ),
+        "category": "degradation",
+        "severity": "LOW",
+        "affected_steps": [
+            {"step_id": "PS-204", "sensor": "vibration", "severity": 1, "delay_ticks": 0,
+             "drift_per_tick": 0.004},
+            {"step_id": "PS-204", "sensor": "torque_force", "severity": 1, "delay_ticks": 1,
+             "drift_per_tick": 0.003},
+        ],
+        "root_cause": "bearing_wear",
+        "expected_yield_impact": -0.006,
+    },
+    {
+        "id": "SCN-014",
+        "name": "품질 batch 편차 — 코팅 균질성",
+        "description": (
+            "코팅 화학 batch 교체 후 두께 균질성에 미세 편차. "
+            "PS-404 표면처리에서 검사 데이터 산포 확대."
+        ),
+        "category": "external",
+        "severity": "MEDIUM",
+        "affected_steps": [
+            {"step_id": "PS-404", "sensor": "thickness", "severity": 2, "delay_ticks": 0},
+            {"step_id": "PS-405", "sensor": "alignment", "severity": 1, "delay_ticks": 2},
+        ],
+        "root_cause": "batch_variance",
+        "expected_yield_impact": -0.014,
+    },
+    {
+        "id": "SCN-015",
+        "name": "전력 dip — 일시적 전류 변동",
+        "description": (
+            "외부 전력망에서 짧은 dip 발생, 용접/충전 공정의 전류 센서가 "
+            "단발성 spike. 즉각 회복되지만 품질 영향 가능."
+        ),
+        "category": "external",
+        "severity": "MEDIUM",
+        "affected_steps": [
+            {"step_id": "PS-202", "sensor": "current", "severity": 2, "delay_ticks": 0},
+            {"step_id": "PS-503", "sensor": "current", "severity": 2, "delay_ticks": 0},
+        ],
+        "root_cause": "power_disturbance",
+        "expected_yield_impact": -0.008,
+    },
 ]
 
 
