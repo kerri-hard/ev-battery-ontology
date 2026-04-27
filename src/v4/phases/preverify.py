@@ -113,6 +113,9 @@ def _build_plan(engine, anomaly: dict, diagnosis: dict) -> dict:
     ranked_actions = [a for a, _ in ranked]
     best_action, best_sim = ranked[0]
 
+    # Multi-step PRE-VERIFY — sequence 시뮬레이션 결과 동시 노출 (단일 score 외에 fallback 가치 가시화)
+    sequence_sim = simulate_action_sequence(engine, ranked_actions)
+
     step_safety = engine._get_step_safety_level(anomaly.get("step_id", ""))
     threshold = _get_score_threshold(engine, step_safety)
 
@@ -136,6 +139,7 @@ def _build_plan(engine, anomaly: dict, diagnosis: dict) -> dict:
         "simulations": [s for _, s in ranked],
         "selected": best_action,
         "rejected_reason": None,
+        "sequence_sim": sequence_sim,  # multi-step preverify
     }
 
 
@@ -230,6 +234,69 @@ def simulate_action(engine, action: dict) -> dict:
         "hist_attempts": _hist_attempts(engine, action_type, cause_type),
         "sim_source": sim_source,
         "replay_samples": replay_n,
+    }
+
+
+def simulate_action_sequence(engine, actions: list[dict]) -> dict:
+    """Multi-step PRE-VERIFY — 액션 sequence를 시뮬해 누적 효과 추정.
+
+    Markov 가정:
+      - 1번째 액션 성공 시 sequence 종료 (실제로 1개만 실행)
+      - 1번째 실패 → 2번째 액션 fallback 실행
+      - cumulative_success_prob = 1 - Π(1 − success_prob_i)
+      - expected_delta_total = Σ (success_prob_chain_i × expected_delta_i)
+        (i번째 액션이 실제로 실행될 확률 × 그 효과)
+
+    anti-recurrence와 결합:
+      - 동일 (step, cause) 시그니처에서 1순위 실패 가능성이 클 때
+        2순위 액션이 자동 fallback으로 평가됨
+
+    Returns:
+        {
+          'steps': [sim_per_action, ...],
+          'cumulative_success_prob': float,
+          'expected_delta_total': float,
+          'cumulative_score': float,  # 시퀀스 전체 점수 (단일 액션 score 보다 신뢰도 높음)
+          'sequence_length': int,
+        }
+    """
+    sims = [simulate_action(engine, a) for a in actions[:3]]  # 최대 3 액션
+    if not sims:
+        return {
+            "steps": [],
+            "cumulative_success_prob": 0.0,
+            "expected_delta_total": 0.0,
+            "cumulative_score": 0.0,
+            "sequence_length": 0,
+        }
+
+    # 각 액션 i가 실제로 실행될 확률 = 이전 모든 액션이 실패할 확률
+    chain_prob = 1.0
+    expected_delta_total = 0.0
+    cumulative_failure_prob = 1.0
+    for sim in sims:
+        sp = float(sim.get("success_prob", 0.0))
+        delta = float(sim.get("expected_delta", 0.0))
+        # i번째 액션이 실행될 확률 = chain_prob (이전 모두 실패한 경우)
+        expected_delta_total += chain_prob * delta
+        # 다음 단계로 넘어가는 확률 = 현재 단계 실패 확률
+        chain_prob *= max(0.0, 1.0 - sp)
+        cumulative_failure_prob *= max(0.0, 1.0 - sp)
+
+    cumulative_success = 1.0 - cumulative_failure_prob
+
+    # cumulative_score: 첫 액션 confidence/risk 기준으로 weighting
+    first = sims[0]
+    risk_factor = float(first.get("risk_factor", 0.5))
+    confidence = float(first.get("confidence", 0.0))
+    cumulative_score = expected_delta_total * confidence * (1.0 - risk_factor)
+
+    return {
+        "steps": sims,
+        "cumulative_success_prob": round(cumulative_success, 4),
+        "expected_delta_total": round(expected_delta_total, 6),
+        "cumulative_score": round(cumulative_score, 6),
+        "sequence_length": len(sims),
     }
 
 
