@@ -275,32 +275,128 @@ class OPCUABridge(SensorBridge):
     현재는 인터페이스만 정의하고, 실제 OPC-UA 연동은 Phase 2에서 구현한다.
     """
 
-    def __init__(self, endpoint: str = "opc.tcp://localhost:4840"):
+    def __init__(
+        self,
+        endpoint: str = "opc.tcp://localhost:4840",
+        node_ids: dict[str, str] | None = None,
+        username: str | None = None,
+        password: str | None = None,
+    ):
+        """
+        Parameters
+        ----------
+        endpoint : str
+            OPC-UA 서버 endpoint (예: 'opc.tcp://192.168.1.10:4840').
+        node_ids : dict[step_id, OPC-UA NodeId 문자열]
+            ProcessStep을 OPC-UA 노드로 매핑. 미지정 시 빈 dict.
+        username / password : OPC-UA 인증 (Basic256Sha256 등 정책 사용 시).
+        """
         self.endpoint = endpoint
+        self.node_ids: dict[str, str] = node_ids or {}
+        self.username = username
+        self.password = password
         self._connected = False
+        self._client = None  # asyncua.Client 인스턴스 (런타임에 생성)
+        self._asyncua_available = self._check_asyncua()
+
+    @staticmethod
+    def _check_asyncua() -> bool:
+        try:
+            import asyncua  # noqa: F401
+            return True
+        except Exception:
+            return False
 
     def connect(self) -> bool:
-        # TODO: asyncua.Client로 OPC-UA 서버 연결
-        raise NotImplementedError(
-            "OPC-UA 브릿지는 아직 구현되지 않았습니다. "
-            "구현 시 `pip install asyncua`가 필요합니다."
-        )
+        """OPC-UA 서버에 연결. asyncua 미설치 또는 연결 실패 시 False.
 
-    def disconnect(self):
-        self._connected = False
+        실 연동은 sync wrapper로 asyncio.run을 호출하나, 메인 엔진의 이벤트
+        루프와 충돌하지 않도록 별도 스레드/loop 사용 권장.
+        """
+        if not self._asyncua_available:
+            return False
+        try:
+            from asyncua.sync import Client  # type: ignore[import-not-found]
+            self._client = Client(url=self.endpoint)
+            if self.username:
+                self._client.set_user(self.username)
+            if self.password:
+                self._client.set_password(self.password)
+            self._client.connect()
+            self._connected = True
+            return True
+        except Exception:
+            self._connected = False
+            self._client = None
+            return False
+
+    def disconnect(self) -> None:
+        try:
+            if self._client is not None:
+                self._client.disconnect()
+        except Exception:
+            pass
+        finally:
+            self._connected = False
+            self._client = None
 
     def poll(self) -> list[dict]:
-        return []
+        """node_ids로 매핑된 step별 센서 값을 1회 읽기.
+
+        반환 포맷: [{step_id, sensor, value, timestamp}, ...]
+        """
+        if not self._connected or self._client is None:
+            return []
+        readings = []
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).isoformat()
+        for step_id, node_id_str in self.node_ids.items():
+            try:
+                node = self._client.get_node(node_id_str)
+                value = node.read_value()
+                readings.append({
+                    "step_id": step_id,
+                    "sensor": node_id_str,
+                    "value": value,
+                    "timestamp": ts,
+                })
+            except Exception:
+                # 개별 노드 실패는 무시 (다음 폴링에서 재시도)
+                continue
+        return readings
 
     def publish_recovery(self, action: dict) -> bool:
-        return False
+        """RECOVER 액션을 OPC-UA write로 PLC에 반영 (예: setpoint 변경).
+
+        action: {action_type, target_step, parameter, new_value}
+        """
+        if not self._connected or self._client is None:
+            return False
+        target_step = action.get("target_step")
+        new_value = action.get("new_value")
+        if not target_step or new_value is None:
+            return False
+        node_id_str = self.node_ids.get(target_step)
+        if not node_id_str:
+            return False
+        try:
+            node = self._client.get_node(node_id_str)
+            node.write_value(new_value)
+            return True
+        except Exception:
+            return False
 
     def get_status(self) -> dict:
         return {
             "type": "opcua",
             "connected": self._connected,
             "endpoint": self.endpoint,
-            "status": "not_implemented",
+            "asyncua_available": self._asyncua_available,
+            "node_count": len(self.node_ids),
+            "status": "ready" if self._connected else (
+                "asyncua_missing" if not self._asyncua_available
+                else "disconnected"
+            ),
         }
 
 
