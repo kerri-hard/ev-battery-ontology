@@ -455,7 +455,11 @@ export interface EngineState {
   slo?: SLOState;
   // 사용자가 클릭한 incident ID — Triptych의 lane 동기화에 사용
   selectedIncidentId?: string | null;
+  // Sidebar nav로 선택한 페이지
+  currentView?: ViewKey;
 }
+
+export type ViewKey = 'overview' | 'healing' | 'slo' | 'learning' | 'console';
 
 export interface RecurrenceSignature {
   step_id: string;

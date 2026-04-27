@@ -53,12 +53,15 @@ const initialState: EngineState = {
     latest_predictive: [],
     orchestrator_traces: [],
   },
+  selectedIncidentId: null,
+  currentView: 'healing',
 };
 
 type Action =
   | { type: 'SET_CONNECTED' }
   | { type: 'SET_DISCONNECTED' }
   | { type: 'SELECT_INCIDENT'; id: string | null }
+  | { type: 'SET_VIEW'; view: import('@/types').ViewKey }
   | { type: 'WS_EVENT'; event: string; data: Record<string, unknown> };
 
 function reducer(state: EngineState, action: Action): EngineState {
@@ -69,6 +72,8 @@ function reducer(state: EngineState, action: Action): EngineState {
       return { ...state, connectionStatus: 'disconnected' };
     case 'SELECT_INCIDENT':
       return { ...state, selectedIncidentId: action.id };
+    case 'SET_VIEW':
+      return { ...state, currentView: action.view };
     case 'WS_EVENT': {
       const handler = eventHandlers[action.event];
       return handler ? handler(state, action.data) : state;
@@ -124,5 +129,9 @@ export function useHarnessEngine() {
     dispatch({ type: 'SELECT_INCIDENT', id });
   }, []);
 
-  return { state, sendCommand, selectIncident };
+  const setView = useCallback((view: import('@/types').ViewKey) => {
+    dispatch({ type: 'SET_VIEW', view });
+  }, []);
+
+  return { state, sendCommand, selectIncident, setView };
 }

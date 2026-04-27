@@ -398,12 +398,153 @@ function OrchestratorPanel() {
   );
 }
 
-/* ── Dashboard Content ── */
-function Dashboard() {
+/* ── Page Views — Sidebar nav가 currentView 결정 ── */
+
+function OverviewView() {
   const { state } = useEngine();
   const { metrics, prevMetrics, metricsHistory } = state;
+  return (
+    <div className="flex flex-col gap-2">
+      <SLOKpiRibbon />
+      <div className="grid grid-cols-12 gap-2">
+        <div className="col-span-4 grid grid-cols-2 gap-1.5">
+          <MiniMetric label="노드" value={metrics ? String(metrics.total_nodes) : '--'}
+            delta={metrics && prevMetrics ? metrics.total_nodes - prevMetrics.total_nodes : null}
+            sparkData={metricsHistory.nodes} color="#00d2ff" />
+          <MiniMetric label="엣지" value={metrics ? String(metrics.total_edges) : '--'}
+            delta={metrics && prevMetrics ? metrics.total_edges - prevMetrics.total_edges : null}
+            sparkData={metricsHistory.edges} color="#8b5cf6" />
+          <MiniMetric label="수율" value={metrics ? `${(metrics.line_yield * 100).toFixed(1)}%` : '--'}
+            delta={metrics && prevMetrics ? (metrics.line_yield - prevMetrics.line_yield) * 100 : null}
+            sparkData={metricsHistory.yield} color="#10b981" />
+          <MiniMetric label="완성도" value={metrics ? metrics.completeness_score.toFixed(1) : '--'}
+            delta={metrics && prevMetrics ? metrics.completeness_score - prevMetrics.completeness_score : null}
+            sparkData={metricsHistory.completeness} color="#f59e0b" />
+        </div>
+        <div className="col-span-4">
+          <AutonomyHero />
+        </div>
+        <div className="col-span-4">
+          <ResearchProgressPanel />
+        </div>
+      </div>
+      <div className="grid grid-cols-12 gap-2 min-h-[400px]">
+        <div className="col-span-7">
+          <SLODefinitions />
+        </div>
+        <div className="col-span-5">
+          <IncidentFlowPanel />
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  const [footerOpen, setFooterOpen] = useState<boolean>(false);
+function HealingView() {
+  return (
+    <div className="flex flex-col gap-2">
+      <SLOKpiRibbon />
+      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-200px)]">
+        <div className="col-span-9 flex flex-col gap-1 min-h-0">
+          <div className="text-[10px] font-bold text-purple-300/80 uppercase tracking-widest px-2">
+            ② DIAGNOSE — 온톨로지 + 인과 추적 (메인)
+          </div>
+          <div className="flex-1 min-h-[640px]">
+            <OntologyGraph className="h-full" />
+          </div>
+        </div>
+        <div className="col-span-3 flex flex-col gap-2 min-h-0">
+          <div className="flex flex-col gap-1 flex-1 min-h-[260px]">
+            <div className="text-[9px] font-bold text-cyan-300/80 uppercase tracking-widest px-2">
+              ① DETECT — 이상 감지
+            </div>
+            <div className="flex-1 overflow-auto">
+              <IncidentFlowPanel />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1 flex-1 min-h-[300px]">
+            <div className="text-[9px] font-bold text-emerald-300/80 uppercase tracking-widest px-2">
+              ③ HEAL — 복구 + 학습
+            </div>
+            <div className="flex-1 overflow-auto">
+              <SelectedIncidentCard />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SLOView() {
+  return (
+    <div className="flex flex-col gap-2">
+      <SLOKpiRibbon />
+      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-220px)]">
+        <div className="col-span-4 overflow-auto">
+          <SLODefinitions />
+        </div>
+        <div className="col-span-8 overflow-auto">
+          <MicroservicePanel />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LearningView() {
+  return (
+    <div className="flex flex-col gap-2">
+      <SLOKpiRibbon />
+      <div className="grid grid-cols-12 gap-2">
+        <div className="col-span-6 flex flex-col gap-2">
+          <RecurrencePanel />
+          <PreverifyPanel />
+        </div>
+        <div className="col-span-6 flex flex-col gap-2">
+          <ResearchProgressPanel />
+          <AutonomyHero />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConsoleView() {
+  return (
+    <div className="flex flex-col gap-2">
+      <SLOKpiRibbon />
+      <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-220px)]">
+        <div className="col-span-5 flex flex-col gap-2">
+          <div className="glass overflow-hidden h-[300px]">
+            <IncidentAnalysis />
+          </div>
+          <div className="glass overflow-hidden flex-1 min-h-[300px]">
+            <EventLog />
+          </div>
+        </div>
+        <div className="col-span-7 flex flex-col gap-2">
+          <PredictiveRiskPanel />
+          <OrchestratorPanel />
+          <RecoveryCasePanel />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Dashboard Shell — Sidebar nav가 view를 결정 ── */
+function Dashboard() {
+  const { state } = useEngine();
+  const view = state.currentView ?? 'healing';
+
+  const VIEW_LABELS: Record<string, string> = {
+    overview: '🏠 Overview — 시스템 한눈',
+    healing: '🛡 Healing — Detect → Diagnose → Heal',
+    slo: '📊 SLO — SRE 모니터링',
+    learning: '🧠 Learning — 학습 / 진화 / 패턴',
+    console: '🖥 Console — Raw observability',
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#06060e]">
@@ -412,104 +553,15 @@ function Dashboard() {
       <div className="flex flex-1 overflow-auto pt-14 min-h-0">
         <Sidebar />
 
-        {/* Main area — SRE Triptych (Detect / Diagnose / Heal) */}
         <main className="flex-1 flex flex-col gap-2 p-2 overflow-auto min-h-0">
-
-          {/* KPI 리본 — 상단에 항상 노출 (SLO 상태 한눈) */}
-          <SLOKpiRibbon />
-
-          {/* 메인: DIAGNOSE (온톨로지)가 가로/세로 모두 메인 — 우측에 DETECT + HEAL 세로 stack */}
-          <div className="grid grid-cols-12 gap-2 min-h-[calc(100vh-180px)]">
-
-            {/* ② DIAGNOSE — 메인 영역 (가로 75% + 세로 풀) */}
-            <div className="col-span-9 flex flex-col gap-1 min-h-0">
-              <div className="text-[10px] font-bold text-purple-300/80 uppercase tracking-widest px-2">
-                ② DIAGNOSE — 온톨로지 + 인과 추적 (메인)
-              </div>
-              <div className="flex-1 min-h-[640px]">
-                <OntologyGraph className="h-full" />
-              </div>
-            </div>
-
-            {/* 우측 사이드: DETECT (위) + HEAL (아래) 세로 stack */}
-            <div className="col-span-3 flex flex-col gap-2 min-h-0">
-
-              {/* ① DETECT */}
-              <div className="flex flex-col gap-1 flex-1 min-h-[260px]">
-                <div className="text-[9px] font-bold text-cyan-300/80 uppercase tracking-widest px-2">
-                  ① DETECT — 이상 감지
-                </div>
-                <div className="flex-1 overflow-auto">
-                  <IncidentFlowPanel />
-                </div>
-              </div>
-
-              {/* ③ HEAL */}
-              <div className="flex flex-col gap-1 flex-1 min-h-[300px]">
-                <div className="text-[9px] font-bold text-emerald-300/80 uppercase tracking-widest px-2">
-                  ③ HEAL — 복구 + 학습
-                </div>
-                <div className="flex-1 overflow-auto">
-                  <SelectedIncidentCard />
-                </div>
-              </div>
-
-            </div>
+          <div className="text-[10px] font-bold text-white/50 uppercase tracking-widest px-2 pb-1 border-b border-white/5">
+            {VIEW_LABELS[view] ?? view}
           </div>
-
-          {/* Footer — 보조 패널 (collapsible) */}
-          <div className="border-t border-white/10 pt-2">
-            <button
-              onClick={() => setFooterOpen(!footerOpen)}
-              className="w-full flex items-center justify-between px-2 py-1 text-[10px] text-white/50 hover:text-white/80 transition"
-            >
-              <span className="font-bold uppercase tracking-wider">
-                보조 패널 ({footerOpen ? '접기' : '펼치기'})
-              </span>
-              <span className="font-mono">{footerOpen ? '▲' : '▼'}</span>
-            </button>
-            {footerOpen && (
-              <div className="grid grid-cols-12 gap-2 mt-2">
-                <div className="col-span-3 flex flex-col gap-1.5">
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <MiniMetric label="노드" value={metrics ? String(metrics.total_nodes) : '--'}
-                      delta={metrics && prevMetrics ? metrics.total_nodes - prevMetrics.total_nodes : null}
-                      sparkData={metricsHistory.nodes} color="#00d2ff" />
-                    <MiniMetric label="엣지" value={metrics ? String(metrics.total_edges) : '--'}
-                      delta={metrics && prevMetrics ? metrics.total_edges - prevMetrics.total_edges : null}
-                      sparkData={metricsHistory.edges} color="#8b5cf6" />
-                    <MiniMetric label="수율" value={metrics ? `${(metrics.line_yield * 100).toFixed(1)}%` : '--'}
-                      delta={metrics && prevMetrics ? (metrics.line_yield - prevMetrics.line_yield) * 100 : null}
-                      sparkData={metricsHistory.yield} color="#10b981" />
-                    <MiniMetric label="완성도" value={metrics ? metrics.completeness_score.toFixed(1) : '--'}
-                      delta={metrics && prevMetrics ? metrics.completeness_score - prevMetrics.completeness_score : null}
-                      sparkData={metricsHistory.completeness} color="#f59e0b" />
-                  </div>
-                  <SLODefinitions />
-                </div>
-                <div className="col-span-3 overflow-auto">
-                  <MicroservicePanel />
-                </div>
-                <div className="col-span-3 flex flex-col gap-1.5">
-                  <AutonomyHero />
-                  <RecurrencePanel />
-                  <PreverifyPanel />
-                  <ResearchProgressPanel />
-                </div>
-                <div className="col-span-3 flex flex-col gap-1.5">
-                  <PredictiveRiskPanel />
-                  <OrchestratorPanel />
-                  <RecoveryCasePanel />
-                  <div className="glass overflow-hidden h-[200px]">
-                    <IncidentAnalysis />
-                  </div>
-                  <div className="glass overflow-hidden h-[200px]">
-                    <EventLog />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          {view === 'overview' && <OverviewView />}
+          {view === 'healing' && <HealingView />}
+          {view === 'slo' && <SLOView />}
+          {view === 'learning' && <LearningView />}
+          {view === 'console' && <ConsoleView />}
         </main>
       </div>
     </div>

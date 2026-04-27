@@ -1,13 +1,14 @@
 'use client';
 
 import { createContext, useContext } from 'react';
-import type { EngineState, WSCommand } from '@/types';
+import type { EngineState, WSCommand, ViewKey } from '@/types';
 import { useHarnessEngine } from '@/hooks/useHarnessEngine';
 
 interface EngineContextValue {
   state: EngineState;
   sendCommand: (cmd: WSCommand) => void;
   selectIncident: (id: string | null) => void;
+  setView: (view: ViewKey) => void;
 }
 
 const EngineContext = createContext<EngineContextValue | null>(null);
