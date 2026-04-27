@@ -525,6 +525,8 @@ class ScenarioEngine:
         """
         self.sensor_sim = sensor_sim
 
+        # 활성화 카운트 — 다양성 가중 weighted random에 사용
+        self._activate_count: dict[str, int] = {}
         # scenario_id -> _ActiveScenario
         self._active: dict[str, _ActiveScenario] = {}
 
@@ -599,11 +601,12 @@ class ScenarioEngine:
         }
 
     def activate_random(self) -> dict[str, Any] | None:
-        """무작위 시나리오 하나를 골라 활성화한다.
+        """가중 무작위 시나리오 활성화 — 다양성 보장.
 
         - 이미 활성 상태인 시나리오는 제외
-        - cooldown(COOLDOWN_TICKS) 안에 종료/시작된 시나리오는 제외 (다양성 강화)
-        - cooldown 통과 후보 없으면 cooldown 무시하고 무작위 선택 (fallback)
+        - cooldown(COOLDOWN_TICKS) 안에 종료/시작된 시나리오는 제외
+        - **활성화 횟수 역수 가중** (적게 발화한 시나리오 우선) — sim 다양성 ↑
+        - cooldown 통과 후보 없으면 cooldown 무시하고 가중 선택 (fallback)
         """
         in_cooldown = {
             sid for sid, last in self._last_seen_tick.items()
@@ -614,12 +617,26 @@ class ScenarioEngine:
             if sid not in self._active and sid not in in_cooldown
         ]
         if not available:
-            # cooldown 모두 막혀있으면 cooldown 무시하고 활성 안 된 것 중에서 선택
             available = [sid for sid in self._library_index if sid not in self._active]
         if not available:
             return None
 
-        chosen = random.choice(available)
+        # weighted random: weight = 1 / (1 + activate_count) — 적게 발화한 시나리오가 더 자주 뽑힘
+        weights = [1.0 / (1 + self._activate_count.get(sid, 0)) for sid in available]
+        total = sum(weights)
+        if total <= 0:
+            chosen = random.choice(available)
+        else:
+            r = random.random() * total
+            acc = 0.0
+            chosen = available[-1]
+            for sid, w in zip(available, weights):
+                acc += w
+                if r <= acc:
+                    chosen = sid
+                    break
+
+        self._activate_count[chosen] = self._activate_count.get(chosen, 0) + 1
         return self.activate_scenario(chosen)
 
     def tick(self) -> list[dict[str, Any]]:
