@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiUrl } from '@/lib/api';
+import { useEngine } from '@/context/EngineContext';
 import GlassCard from '@/components/common/GlassCard';
 import { LoadingState, EmptyState } from '@/components/common/StateMessages';
 
@@ -27,6 +28,7 @@ interface CausalDiscoveryStatus {
 
 /** L3 인과 추론 시각화 — multi-hop chain 추적 */
 export default function CausalChainTracer() {
+  const { navigateTo } = useEngine();
   const [data, setData] = useState<CausalDiscoveryStatus | null>(null);
 
   useEffect(() => {
@@ -87,7 +89,7 @@ export default function CausalChainTracer() {
         ) : (
           <div className="space-y-1 max-h-[200px] overflow-y-auto pr-1">
             {chains.slice(0, 8).map((chain, idx) => (
-              <ChainRow key={idx} chain={chain} />
+              <ChainRow key={idx} chain={chain} onTraceStep={(s) => navigateTo({ view: 'healing', stepId: s })} />
             ))}
           </div>
         )}
@@ -100,7 +102,13 @@ export default function CausalChainTracer() {
           {promotions.length === 0 ? (
             <div className="ds-caption">아직 promotion 없음</div>
           ) : (
-            promotions.slice(0, 6).map((rule) => <RuleRow key={rule.id} rule={rule} />)
+            promotions.slice(0, 6).map((rule) => (
+              <RuleRow
+                key={rule.id}
+                rule={rule}
+                onTraceStep={(stepId) => navigateTo({ view: 'healing', stepId })}
+              />
+            ))
           )}
         </div>
       </div>
@@ -108,9 +116,30 @@ export default function CausalChainTracer() {
   );
 }
 
-function ChainRow({ chain }: { chain: { steps: CausalRule[]; total_strength: number } }) {
+function ChainRow({
+  chain,
+  onTraceStep,
+}: {
+  chain: { steps: CausalRule[]; total_strength: number };
+  onTraceStep: (stepId: string) => void;
+}) {
+  // chain의 source/target step 추출 (있으면)
+  const sourceStep = chain.steps[0]?.source_step;
+  const targetStep = chain.steps[chain.steps.length - 1]?.target_step;
+  const traceable = sourceStep || targetStep;
   return (
-    <div className="px-2 py-1.5 rounded bg-white/[0.03] border-l-2 border-purple-400/40">
+    <button
+      type="button"
+      onClick={() => {
+        if (sourceStep) onTraceStep(sourceStep);
+        else if (targetStep) onTraceStep(targetStep);
+      }}
+      disabled={!traceable}
+      className={`w-full text-left px-2 py-1.5 rounded bg-white/[0.03] border-l-2 border-purple-400/40 transition ${
+        traceable ? 'hover:bg-purple-500/10 cursor-pointer' : 'cursor-default'
+      }`}
+      title={traceable ? `Healing 페이지에서 ${sourceStep ?? targetStep} 추적 →` : ''}
+    >
       <div className="flex items-center gap-1 flex-wrap">
         {chain.steps.map((step, i) => (
           <span key={i} className="flex items-center gap-1">
@@ -123,19 +152,45 @@ function ChainRow({ chain }: { chain: { steps: CausalRule[]; total_strength: num
           {chain.steps[chain.steps.length - 1].effect_type}
         </span>
       </div>
-      <div className="ds-caption mt-0.5">
-        chain length {chain.steps.length} · cumulative strength{' '}
-        <span className="text-white/70 font-mono">{chain.total_strength.toFixed(3)}</span>
+      <div className="ds-caption mt-0.5 flex items-center justify-between gap-2">
+        <span>
+          chain length {chain.steps.length} · cumulative strength{' '}
+          <span className="text-white/70 font-mono">{chain.total_strength.toFixed(3)}</span>
+        </span>
+        {traceable && (
+          <span className="text-cyan-300 text-[8px]">
+            {sourceStep}
+            {targetStep && targetStep !== sourceStep ? ` → ${targetStep}` : ''} →
+          </span>
+        )}
       </div>
-    </div>
+    </button>
   );
 }
 
-function RuleRow({ rule }: { rule: CausalRule }) {
+function RuleRow({
+  rule,
+  onTraceStep,
+}: {
+  rule: CausalRule;
+  onTraceStep: (stepId: string) => void;
+}) {
   const sigStrong = rule.strength >= 0.7;
   const colorCls = sigStrong ? 'text-emerald-300' : rule.strength >= 0.5 ? 'text-amber-300' : 'text-rose-300';
+  const traceable = rule.source_step || rule.target_step;
   return (
-    <div className="px-2 py-1 rounded bg-white/[0.03] border-l-2 border-cyan-400/40">
+    <button
+      type="button"
+      onClick={() => {
+        if (rule.source_step) onTraceStep(rule.source_step);
+        else if (rule.target_step) onTraceStep(rule.target_step);
+      }}
+      disabled={!traceable}
+      className={`w-full text-left px-2 py-1 rounded bg-white/[0.03] border-l-2 border-cyan-400/40 transition ${
+        traceable ? 'hover:bg-cyan-500/10 cursor-pointer' : 'cursor-default'
+      }`}
+      title={traceable ? `Healing에서 ${rule.source_step ?? rule.target_step} 추적 →` : ''}
+    >
       <div className="flex items-center justify-between gap-2">
         <span className="text-[9px] font-mono text-cyan-300 font-bold">{rule.id}</span>
         <span className={`text-[9px] font-mono ${colorCls}`}>str {rule.strength.toFixed(3)}</span>
@@ -150,7 +205,7 @@ function RuleRow({ rule }: { rule: CausalRule }) {
         {rule.p_value !== undefined && ` · p=${rule.p_value.toExponential(1)}`}
         {rule.best_lag !== undefined && ` · lag=${rule.best_lag}`}
       </div>
-    </div>
+    </button>
   );
 }
 
