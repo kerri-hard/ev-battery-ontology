@@ -474,7 +474,7 @@ export interface NavTarget {
   scenarioId?: string | null;
 }
 
-export type ViewKey = 'overview' | 'healing' | 'slo' | 'learning' | 'console';
+export type ViewKey = 'overview' | 'healing' | 'slo' | 'learning' | 'console' | 'settings';
 
 export interface RecurrenceSignature {
   step_id: string;

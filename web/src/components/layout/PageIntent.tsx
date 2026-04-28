@@ -51,6 +51,13 @@ const PAGE_META: Record<ViewKey, PageMeta> = {
     hint: 'Raw observability — 디버그 채널',
     accent: 'white',
   },
+  settings: {
+    icon: '⚙',
+    title: 'Settings',
+    question: '시스템을 어떻게 조정할까?',
+    hint: 'HITL 정책 · 키보드 단축키 · 시스템 정보',
+    accent: 'white',
+  },
 };
 
 const ACCENT_COLOR: Record<PageMeta['accent'], string> = {
