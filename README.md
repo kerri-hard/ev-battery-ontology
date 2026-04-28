@@ -6,7 +6,9 @@
 
 **현재 단계**: L3 자율 공장 + L4 Tier 2 + 운영자 워크벤치 — 자동 인과 발견·자가 진화·Multi-step PRE-VERIFY·Counterfactual replay·OPC-UA bridge stub·5-페이지 운영 도구.
 
-📖 [VISION.md](VISION.md) · [ARCHITECTURE.md](ARCHITECTURE.md) · [CLAUDE.md](CLAUDE.md)
+📖 [VISION.md](VISION.md) · [ARCHITECTURE.md](ARCHITECTURE.md) · [CLAUDE.md](CLAUDE.md) · **[개발자 핸드북 📘](docs/handbook/00-toc.md)**
+
+> 신규 합류 개발자라면 먼저 [개발자 핸드북](docs/handbook/00-toc.md) (10 챕터, 비전·아키텍처·온톨로지·7-페이즈·에이전트·기능 카탈로그·SLO·개발 절차·용어집) 을 읽어 주세요.
 
 ## 빠른 시작
 
