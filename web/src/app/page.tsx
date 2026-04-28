@@ -22,7 +22,9 @@ import CausalChainTracer from '@/components/learning/CausalChainTracer';
 import TodayHeadline from '@/components/overview/TodayHeadline';
 import ActiveScenarioPanel from '@/components/scenarios/ActiveScenarioPanel';
 import NotificationCenter from '@/components/common/NotificationCenter';
+import KeyboardShortcuts from '@/components/common/KeyboardShortcuts';
 import PageIntent from '@/components/layout/PageIntent';
+import SettingsView from '@/components/settings/SettingsView';
 import SparklineChart from '@/components/charts/SparklineChart';
 import Badge from '@/components/common/Badge';
 import { apiUrl } from '@/lib/api';
@@ -644,6 +646,7 @@ function Dashboard() {
     <div className="min-h-screen flex flex-col bg-[#06060e]">
       <Header />
       <NotificationCenter />
+      <KeyboardShortcuts />
 
       <div className="flex flex-1 overflow-auto pt-14 min-h-0">
         <Sidebar />
@@ -656,6 +659,7 @@ function Dashboard() {
           {view === 'slo' && <SLOView />}
           {view === 'learning' && <LearningView />}
           {view === 'console' && <ConsoleView />}
+          {view === 'settings' && <SettingsView />}
         </main>
       </div>
     </div>

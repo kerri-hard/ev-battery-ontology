@@ -14,6 +14,7 @@ const NAV_ITEMS: { key: ViewKey; label: string; icon: string; desc: string }[] =
   { key: 'slo', label: 'SLO', icon: '📊', desc: 'SLI / per-step / 위반' },
   { key: 'learning', label: 'Learning', icon: '🧠', desc: '학습 / 진화 / 패턴' },
   { key: 'console', label: 'Console', icon: '🖥', desc: 'Raw 로그 / HITL' },
+  { key: 'settings', label: 'Settings', icon: '⚙', desc: 'HITL 정책 / 단축키' },
 ];
 
 export default function Sidebar() {
@@ -34,7 +35,9 @@ export default function Sidebar() {
           <button
             key={item.key}
             onClick={() => setView(item.key)}
-            className={`w-full text-left px-2.5 py-2 rounded-lg flex items-start gap-2 transition border ${
+            aria-label={`${item.label} 페이지로 이동 (단축키 g ${item.key[0]})`}
+            aria-current={current === item.key ? 'page' : undefined}
+            className={`w-full text-left px-2.5 py-2 rounded-lg flex items-start gap-2 transition border focus:outline-none focus:ring-2 focus:ring-cyan-400/60 ${
               current === item.key
                 ? 'bg-cyan-500/15 border-cyan-400/40 text-cyan-100'
                 : 'bg-transparent border-white/5 text-white/60 hover:bg-white/5 hover:text-white/90 hover:border-white/15'
@@ -45,6 +48,7 @@ export default function Sidebar() {
               <div className="text-[11px] font-bold">{item.label}</div>
               <div className="text-[9px] opacity-60 truncate">{item.desc}</div>
             </div>
+            <kbd className="text-[8px] font-mono opacity-40 px-1 mt-0.5">g{item.key[0]}</kbd>
           </button>
         ))}
       </nav>
