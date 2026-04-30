@@ -22,6 +22,12 @@ from __future__ import annotations
 
 from typing import Any
 
+# 학습 큐 후보 판정 임계.
+# missed_value (best_alt - chosen) 가 이 값 이상이면 *시스템이 더 좋은 선택을 놓침*
+# → 학습 큐 후보 (검토 + 후속 사이클에서 진단/플레이북 보정 데이터로 활용).
+# 0.005 = yield 0.5%p 차이 (제조 도메인에서 유의미한 단위).
+LEARNING_CANDIDATE_MISSED_VALUE = 0.005
+
 
 def compute_runtime_counterfactual(
     chosen_sim: dict[str, Any] | None,
@@ -127,4 +133,18 @@ def compute_runtime_counterfactual(
         "n_alternatives": len(ranked),
         "interpretation": interpretation,
         "ranked_alternatives": ranked,
+        "is_learning_candidate": is_learning_candidate(missed_value),
+        "learning_threshold": LEARNING_CANDIDATE_MISSED_VALUE,
     }
+
+
+def is_learning_candidate(missed_value: float) -> bool:
+    """missed_value 가 임계 이상이면 True — 학습 큐 후보.
+
+    임계 (LEARNING_CANDIDATE_MISSED_VALUE = 0.005):
+    - 시스템이 시뮬상 더 좋은 액션을 *놓침* → 진단 score 가중치 또는 playbook 보정 후보
+    - 다음 사이클에서 EvolutionAgent 또는 LearningRecord에 활용 가능
+
+    음수/0 missed_value는 *현 선택이 최적* → 학습 후보 아님.
+    """
+    return missed_value >= LEARNING_CANDIDATE_MISSED_VALUE
