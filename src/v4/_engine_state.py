@@ -222,10 +222,20 @@ class StateMixin:
         return out
 
     def _compute_global_sli(self, incidents: list) -> dict:
-        """전체 시스템 SLI — 단일 microservice 집합으로서의 platform SLI."""
+        """전체 시스템 SLI — 단일 microservice 집합으로서의 platform SLI.
+
+        cold-start (incidents=0) 일 때 SLI 값을 0.0이 아니라 *no_data* sentinel로
+        표기. 이전엔 auto_recovery_rate=0.0, yield_compliance=0.0이 즉시 SLO 위반
+        으로 판정되어 운영자에게 가짜 알람을 푸시했다.
+        """
         n = len(incidents)
         if n == 0:
-            return {sli: 0.0 for sli in self.SLO_TARGETS}
+            return {
+                **{sli: 0.0 for sli in self.SLO_TARGETS},
+                "_no_data": True,
+                "total_incidents": 0,
+                "total_auto_recovered": 0,
+            }
 
         auto = sum(1 for x in incidents if x.get("auto_recovered"))
         hitl = sum(1 for x in incidents if x.get("hitl_required"))
@@ -246,22 +256,45 @@ class StateMixin:
         except Exception:
             pass
 
-        return {
+        # 그래프 DB 장애 (total_steps=0)도 cold-start와 같은 sentinel로 표기.
+        # 그렇지 않으면 yield_compliance=0.0이 SLO 위반 알람으로 둔갑.
+        if total_steps == 0:
+            yield_compliance = 0.0
+            yield_no_data = True
+        else:
+            yield_compliance = round(yield_meets / total_steps, 4)
+            yield_no_data = False
+
+        result = {
             "auto_recovery_rate": round(auto / n, 4),
             "p95_recovery_latency": round(_percentile(times, 95), 4) if times else 0.0,
             "p50_recovery_latency": round(_percentile(times, 50), 4) if times else 0.0,
-            "yield_compliance": round(yield_meets / max(total_steps, 1), 4),
+            "yield_compliance": yield_compliance,
             "hitl_rate": round(hitl / n, 4),
             "repeat_rate": float(kpis.get("repeat_incident_rate", 0.0)),
             "total_incidents": n,
             "total_auto_recovered": auto,
         }
+        if yield_no_data:
+            result["_yield_no_data"] = True
+        return result
 
     def _compute_slo_violations(self, global_sli: dict, per_step: list) -> list:
-        """SLO 미달 항목 + 영향받는 step 리스트."""
+        """SLO 미달 항목 + 영향받는 step 리스트.
+
+        cold-start ("_no_data" flag) 또는 그래프 DB 장애 ("_yield_no_data") 일
+        때는 SLI 값이 0.0으로 채워져 있어도 *진짜 위반이 아님* — sentinel 체크.
+        """
+        if global_sli.get("_no_data"):
+            return []
+        yield_no_data = bool(global_sli.get("_yield_no_data"))
+
         violations = []
         for sli_key, spec in self.SLO_TARGETS.items():
             if sli_key not in global_sli:
+                continue
+            # yield_compliance가 no_data인 경우 (그래프 DB 장애) 위반 판정 skip
+            if sli_key == "yield_compliance" and yield_no_data:
                 continue
             current = global_sli[sli_key]
             target = spec["target"]
