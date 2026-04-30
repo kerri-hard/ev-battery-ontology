@@ -261,6 +261,14 @@ def _link_recovery_action(engine, incident: dict, rr: dict) -> None:
         )
     except Exception:
         pass
+    # action_type 기반 ComplianceItem 자동 매핑 (UN R150 / IATF 16949 / EU Battery)
+    action_type = incident.get("action_type") or (rr.get("action") or {}).get("action_type")
+    if action_type:
+        try:
+            from v4.regulation import link_action_to_compliance
+            link_action_to_compliance(engine.conn, str(recovery_id), str(action_type))
+        except Exception:
+            pass
 
 
 def _strengthen_l3_links(engine, incident: dict, anomaly: dict) -> int:

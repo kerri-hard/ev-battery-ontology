@@ -147,6 +147,55 @@ def seed_default_regulations(conn) -> dict:
     return counters
 
 
+# action_type → ComplianceItem 매핑 (정적 — 도메인 지식).
+# 향후 그래프 기반 학습으로 동적화 가능.
+ACTION_COMPLIANCE_MAP: dict[str, list[str]] = {
+    "ADJUST_PARAMETER": ["COMP-003", "COMP-004"],   # FMEA 검토 + MSA Gage R&R
+    "INCREASE_INSPECTION": ["COMP-002", "COMP-004"], # 고전압 절연 + MSA
+    "EQUIPMENT_RESET": ["COMP-001", "COMP-003"],     # 셀-팩 안전 + FMEA
+    "MATERIAL_SWITCH": ["COMP-005", "COMP-006"],     # PPAP + BatteryPassport
+    "ESCALATE": ["COMP-001"],                        # 안전 시퀀스 강제
+}
+
+
+def link_action_to_compliance(conn, recovery_action_id: str, action_type: str) -> int:
+    """RecoveryAction → ComplianceItem COMPLIES_WITH 관계 자동 생성.
+
+    action_type 에 매핑된 ComplianceItem들과 idempotent 연결.
+
+    Returns:
+        생성된 관계 수 (이미 존재하면 0).
+    """
+    if not recovery_action_id or not action_type:
+        return 0
+    items = ACTION_COMPLIANCE_MAP.get(action_type, [])
+    if not items:
+        return 0
+    created = 0
+    for comp_id in items:
+        try:
+            r = conn.execute(
+                "MATCH (ra:RecoveryAction {id: $rid})-[:COMPLIES_WITH]->"
+                "(c:ComplianceItem {id: $cid}) RETURN ra.id LIMIT 1",
+                {"rid": recovery_action_id, "cid": comp_id},
+            )
+            if r.has_next():
+                continue
+        except Exception:
+            pass
+        try:
+            conn.execute(
+                "MATCH (ra:RecoveryAction {id: $rid}), "
+                "      (c:ComplianceItem {id: $cid}) "
+                "CREATE (ra)-[:COMPLIES_WITH]->(c)",
+                {"rid": recovery_action_id, "cid": comp_id},
+            )
+            created += 1
+        except Exception:
+            pass
+    return created
+
+
 def _try(conn, query: str, params: dict | None = None) -> None:
     try:
         if params:
