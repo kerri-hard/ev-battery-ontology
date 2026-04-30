@@ -33,6 +33,18 @@ DEFAULT_SITE_ID = "SITE-001"
 DEFAULT_SITE_NAME = "Cheonan Plant"
 DEFAULT_SITE_LOCATION = "충남 천안"
 
+# Personnel / Qualification 기본 시드 (mock 운영자 1명).
+# 실 시스템에서는 인증/SSO 통합 후 동적 등록.
+DEFAULT_PERSONNEL_ID = "P-001"
+DEFAULT_PERSONNEL_NAME = "Senior Operator"
+DEFAULT_PERSONNEL_ROLE = "supervisor"
+DEFAULT_PERSONNEL_SAFETY_MAX = "A"  # A/B/C — 권한 가능한 안전등급 최고
+
+DEFAULT_QUALIFICATION_ID = "Q-001"
+DEFAULT_QUALIFICATION_NAME = "고전압·레이저 작업 자격"
+DEFAULT_QUALIFICATION_ISSUED_BY = "산업안전보건공단"
+DEFAULT_QUALIFICATION_VALID_UNTIL = "2027-12-31"
+
 
 def extend_schema_isa95(conn) -> None:
     """ISA-95 노드 + 관계 idempotent 추가.
@@ -67,11 +79,33 @@ def extend_schema_isa95(conn) -> None:
             PRIMARY KEY(id)
         )
     """)
+    # Personnel — 운영자/엔지니어. HITL 정책의 *사람 식별* 시작점.
+    _try(conn, """
+        CREATE NODE TABLE Personnel (
+            id STRING,
+            name STRING,
+            role STRING,
+            safety_level_max STRING,
+            PRIMARY KEY(id)
+        )
+    """)
+    # Qualification — 자격증/인증. ISA-95 PersonnelQualification + IATF 16949 트레이닝 매트릭스.
+    _try(conn, """
+        CREATE NODE TABLE Qualification (
+            id STRING,
+            name STRING,
+            issued_by STRING,
+            valid_until STRING,
+            PRIMARY KEY(id)
+        )
+    """)
 
     # ── Relationships ──
     _try(conn, "CREATE REL TABLE HAS_SITE (FROM Enterprise TO Site)")
     _try(conn, "CREATE REL TABLE CONTAINS_AREA (FROM Site TO ProcessArea)")
     _try(conn, "CREATE REL TABLE INSTANCE_OF (FROM Equipment TO EquipmentClass)")
+    _try(conn, "CREATE REL TABLE HAS_QUALIFICATION (FROM Personnel TO Qualification)")
+    _try(conn, "CREATE REL TABLE WORKS_AT (FROM Personnel TO Site)")
 
 
 def seed_default_isa95(conn) -> dict:
@@ -139,6 +173,48 @@ def seed_default_isa95(conn) -> dict:
                 CREATE (s)-[:CONTAINS_AREA]->(pa)
             """)
             counters["area_linked"] += 1
+
+    # Personnel + Qualification 시드 (mock 운영자 1명)
+    counters["personnel_created"] = 0
+    counters["qualification_created"] = 0
+    if not _exists(conn, "MATCH (p:Personnel {id: $id}) RETURN p.id LIMIT 1",
+                   {"id": DEFAULT_PERSONNEL_ID}):
+        _try(conn, f"""
+            CREATE (p:Personnel {{
+                id: '{DEFAULT_PERSONNEL_ID}',
+                name: '{DEFAULT_PERSONNEL_NAME}',
+                role: '{DEFAULT_PERSONNEL_ROLE}',
+                safety_level_max: '{DEFAULT_PERSONNEL_SAFETY_MAX}'
+            }})
+        """)
+        counters["personnel_created"] = 1
+
+    if not _exists(conn, "MATCH (q:Qualification {id: $id}) RETURN q.id LIMIT 1",
+                   {"id": DEFAULT_QUALIFICATION_ID}):
+        _try(conn, f"""
+            CREATE (q:Qualification {{
+                id: '{DEFAULT_QUALIFICATION_ID}',
+                name: '{DEFAULT_QUALIFICATION_NAME}',
+                issued_by: '{DEFAULT_QUALIFICATION_ISSUED_BY}',
+                valid_until: '{DEFAULT_QUALIFICATION_VALID_UNTIL}'
+            }})
+        """)
+        counters["qualification_created"] = 1
+
+    # Personnel → Qualification (HAS_QUALIFICATION)
+    _try(conn, f"""
+        MATCH (p:Personnel {{id: '{DEFAULT_PERSONNEL_ID}'}}),
+              (q:Qualification {{id: '{DEFAULT_QUALIFICATION_ID}'}})
+        WHERE NOT EXISTS {{ MATCH (p)-[:HAS_QUALIFICATION]->(q) }}
+        CREATE (p)-[:HAS_QUALIFICATION]->(q)
+    """)
+    # Personnel → Site (WORKS_AT)
+    _try(conn, f"""
+        MATCH (p:Personnel {{id: '{DEFAULT_PERSONNEL_ID}'}}),
+              (s:Site {{id: '{DEFAULT_SITE_ID}'}})
+        WHERE NOT EXISTS {{ MATCH (p)-[:WORKS_AT]->(s) }}
+        CREATE (p)-[:WORKS_AT]->(s)
+    """)
 
     return counters
 
