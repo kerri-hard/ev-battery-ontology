@@ -48,6 +48,15 @@ def extend_schema_l5(conn) -> None:
             "fitness_impact DOUBLE, applied BOOLEAN, "
             "created_at STRING, PRIMARY KEY(id))"
         ),
+        # CounterfactualLearning — runtime counterfactual에서 시스템이 더 좋은
+        # 액션을 놓친 사례 (missed_value >= 임계). 학습 큐 단위 영속화.
+        (
+            "CREATE NODE TABLE IF NOT EXISTS CounterfactualLearning ("
+            "id STRING, incident_id STRING, step_id STRING, "
+            "chosen_action STRING, best_alternative STRING, "
+            "missed_value DOUBLE, created_at STRING, "
+            "PRIMARY KEY(id))"
+        ),
         (
             "CREATE REL TABLE IF NOT EXISTS TESTED_MUTATION ("
             "FROM LearningRecord TO StrategyMutation)"
@@ -63,6 +72,62 @@ def extend_schema_l5(conn) -> None:
         except Exception:
             # 이미 존재하거나 Kuzu 버전 차이 — 재시도하지 않음
             pass
+
+
+def record_counterfactual_learning(
+    conn,
+    incident_id: str,
+    step_id: str,
+    cf: dict,
+) -> str | None:
+    """Counterfactual 결과가 학습 후보면 CounterfactualLearning 노드로 영속.
+
+    조건: cf.is_learning_candidate == True (counterfactual 모듈의 임계 통과).
+    노드 ID: "CFL-{incident_id}" (incident별 unique, idempotent).
+
+    Args:
+        conn: Kuzu connection
+        incident_id: 원본 incident ID
+        step_id: 발생 step ID
+        cf: simulate_action_sequence 결과의 counterfactual dict
+
+    Returns:
+        생성된 노드 ID 또는 None (학습 후보 아니거나 영속 실패).
+    """
+    if not cf or not cf.get("is_learning_candidate"):
+        return None
+
+    cfl_id = f"CFL-{incident_id}"
+    try:
+        # idempotent — 이미 있으면 skip (재실행 안전)
+        r = conn.execute(
+            "MATCH (cfl:CounterfactualLearning {id: $id}) RETURN cfl.id LIMIT 1",
+            {"id": cfl_id},
+        )
+        if r.has_next():
+            return cfl_id
+    except Exception:
+        pass
+
+    try:
+        conn.execute(
+            "CREATE (cfl:CounterfactualLearning {"
+            "id: $id, incident_id: $iid, step_id: $sid, "
+            "chosen_action: $ca, best_alternative: $ba, "
+            "missed_value: $mv, created_at: $ts})",
+            {
+                "id": cfl_id,
+                "iid": str(incident_id),
+                "sid": str(step_id or ""),
+                "ca": str(cf.get("chosen_action") or ""),
+                "ba": str(cf.get("best_alternative") or ""),
+                "mv": float(cf.get("missed_value", 0.0)),
+                "ts": datetime.now().isoformat(),
+            },
+        )
+        return cfl_id
+    except Exception:
+        return None
 
 
 def sync_learning_to_ontology(conn, cycle_result: dict,
