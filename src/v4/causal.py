@@ -28,7 +28,12 @@ from datetime import datetime
 # ═══════════════════════════════════════════════════════════════
 
 def extend_schema_l3(conn):
-    """온톨로지에 L3(인과 추론) 계층을 추가한다."""
+    """온톨로지에 L3(인과 추론) 계층을 추가한다.
+
+    CausalRule.strength 는 단일 P(effect|cause) 점추정. 향후 Bayesian
+    conditional 추론 (VISION §4.3 "다음 핵심") 을 위해 ConditionalStrength
+    노드를 시작점으로 도입 — context_factor 별 조건부 확률 P(effect|cause, ctx).
+    """
     node_tables = [
         ("CREATE NODE TABLE CausalRule ("
          "id STRING, name STRING, cause_type STRING, effect_type STRING, "
@@ -43,6 +48,15 @@ def extend_schema_l3(conn):
          "cause_sequence STRING, resolution STRING, "
          "success_count INT64 DEFAULT 0, fail_count INT64 DEFAULT 0, "
          "avg_recovery_sec DOUBLE DEFAULT 0.0, PRIMARY KEY(id))"),
+        # Bayesian conditional strength — VISION §4.3 시작점
+        # 같은 cause라도 context (예: time_of_day, batch, equipment_class)
+        # 에 따라 P(effect|cause, context) 가 다를 수 있음
+        ("CREATE NODE TABLE ConditionalStrength ("
+         "id STRING, causal_rule_id STRING, "
+         "context_factor STRING, context_value STRING, "
+         "conditional_prob DOUBLE DEFAULT 0.5, "
+         "sample_count INT64 DEFAULT 0, "
+         "last_updated STRING, PRIMARY KEY(id))"),
     ]
     rel_tables = [
         "CREATE REL TABLE CAUSES (FROM CausalRule TO CausalRule, strength DOUBLE DEFAULT 0.5)",
@@ -51,12 +65,98 @@ def extend_schema_l3(conn):
         "CREATE REL TABLE MATCHED_BY (FROM Incident TO FailureChain)",
         "CREATE REL TABLE CHAIN_USES (FROM FailureChain TO CausalRule)",
         "CREATE REL TABLE PREDICTS (FROM AnomalyPattern TO DefectMode, confidence DOUBLE DEFAULT 0.5)",
+        # ConditionalStrength → CausalRule
+        "CREATE REL TABLE CONDITIONS_ON (FROM ConditionalStrength TO CausalRule)",
     ]
     for ddl in node_tables + rel_tables:
         try:
             conn.execute(ddl)
         except Exception:
             pass
+
+
+def record_conditional_strength(
+    conn,
+    causal_rule_id: str,
+    context_factor: str,
+    context_value: str,
+    conditional_prob: float,
+    sample_count: int = 1,
+) -> str | None:
+    """조건부 인과 강도 영속화 — P(effect|cause, context_factor=context_value).
+
+    새 ConditionalStrength 노드 생성 또는 기존 (cause_id, factor, value) 조합 시
+    sample_count 증가 + EMA 업데이트.
+
+    Args:
+        causal_rule_id: 부모 CausalRule.id
+        context_factor: 예 "time_of_day", "batch_id", "equipment_class"
+        context_value: 예 "night", "BATCH-2026-04", "EQ-WELDER-A"
+        conditional_prob: P(effect|cause, context) 관측값 [0, 1]
+        sample_count: 누적 샘플 수 (기본 1)
+
+    Returns:
+        ConditionalStrength 노드 ID 또는 None (실패).
+    """
+    from datetime import datetime as _dt
+    cs_id = f"CS-{causal_rule_id}-{context_factor}-{context_value}"
+    now = _dt.now().isoformat()
+    p = max(0.0, min(1.0, float(conditional_prob)))
+    try:
+        # 기존 노드 lookup
+        r = conn.execute(
+            "MATCH (cs:ConditionalStrength {id: $id}) "
+            "RETURN cs.conditional_prob, cs.sample_count LIMIT 1",
+            {"id": cs_id},
+        )
+        if r.has_next():
+            row = r.get_next()
+            old_prob = float(row[0] or 0.5)
+            old_n = int(row[1] or 0)
+            # EMA update with sample-weighted alpha
+            alpha = sample_count / max(old_n + sample_count, 1)
+            new_prob = (1.0 - alpha) * old_prob + alpha * p
+            try:
+                conn.execute(
+                    "MATCH (cs:ConditionalStrength {id: $id}) "
+                    "SET cs.conditional_prob = $p, "
+                    "    cs.sample_count = cs.sample_count + $n, "
+                    "    cs.last_updated = $ts",
+                    {"id": cs_id, "p": new_prob, "n": int(sample_count), "ts": now},
+                )
+                return cs_id
+            except Exception:
+                return None
+        # 신규 노드 생성
+        try:
+            conn.execute(
+                "CREATE (cs:ConditionalStrength {"
+                "id: $id, causal_rule_id: $crid, "
+                "context_factor: $cf, context_value: $cv, "
+                "conditional_prob: $p, sample_count: $n, "
+                "last_updated: $ts})",
+                {
+                    "id": cs_id, "crid": str(causal_rule_id),
+                    "cf": str(context_factor), "cv": str(context_value),
+                    "p": p, "n": int(sample_count), "ts": now,
+                },
+            )
+            # CausalRule 과 연결
+            try:
+                conn.execute(
+                    "MATCH (cs:ConditionalStrength {id: $id}), "
+                    "      (cr:CausalRule {id: $crid}) "
+                    "WHERE NOT EXISTS { MATCH (cs)-[:CONDITIONS_ON]->(cr) } "
+                    "CREATE (cs)-[:CONDITIONS_ON]->(cr)",
+                    {"id": cs_id, "crid": str(causal_rule_id)},
+                )
+            except Exception:
+                pass
+            return cs_id
+        except Exception:
+            return None
+    except Exception:
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════
