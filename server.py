@@ -309,6 +309,63 @@ async def nl_query(body: dict):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/governance/audit")
+async def list_audit_trail():
+    """누적 AuditTrail 이벤트 (HITL 거버넌스 추적)."""
+    if not engine.conn:
+        await engine.initialize()
+    out = []
+    try:
+        r = engine.conn.execute(
+            "MATCH (at:AuditTrail) "
+            "RETURN at.id, at.event_type, at.target_id, at.personnel_id, "
+            "       at.timestamp, at.details "
+            "ORDER BY at.timestamp DESC LIMIT 30"
+        )
+        while r.has_next():
+            row = r.get_next()
+            out.append({
+                "id": row[0], "event_type": row[1], "target_id": row[2],
+                "personnel_id": row[3], "timestamp": row[4], "details": row[5],
+            })
+    except Exception as e:
+        return JSONResponse({"error": str(e), "items": [], "count": 0}, status_code=500)
+    return JSONResponse({"items": out, "count": len(out)})
+
+
+@app.get("/api/governance/compliance")
+async def list_compliance():
+    """Regulation + ComplianceItem 카탈로그 — 거버넌스 패널용."""
+    if not engine.conn:
+        await engine.initialize()
+    regulations = []
+    items = []
+    try:
+        r = engine.conn.execute(
+            "MATCH (reg:Regulation) "
+            "RETURN reg.id, reg.name, reg.description, reg.category, reg.country, reg.effective_date "
+            "ORDER BY reg.id"
+        )
+        while r.has_next():
+            row = r.get_next()
+            regulations.append({
+                "id": row[0], "name": row[1], "description": row[2],
+                "category": row[3], "country": row[4], "effective_date": row[5],
+            })
+        r = engine.conn.execute(
+            "MATCH (c:ComplianceItem) "
+            "RETURN c.id, c.name, c.regulation_id, c.kind ORDER BY c.regulation_id, c.id"
+        )
+        while r.has_next():
+            row = r.get_next()
+            items.append({
+                "id": row[0], "name": row[1], "regulation_id": row[2], "kind": row[3],
+            })
+    except Exception as e:
+        return JSONResponse({"error": str(e), "regulations": [], "items": []}, status_code=500)
+    return JSONResponse({"regulations": regulations, "items": items})
+
+
 @app.get("/api/counterfactual-learning")
 async def list_counterfactual_learning():
     """누적 CounterfactualLearning 노드 목록 (Learning 페이지용).

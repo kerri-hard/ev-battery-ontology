@@ -15,6 +15,7 @@ import IncidentFlowPanel from '@/components/slo/IncidentFlowPanel';
 import SLOKpiRibbon from '@/components/slo/SLOKpiRibbon';
 import SelectedIncidentCard from '@/components/slo/SelectedIncidentCard';
 import SLOSparklines from '@/components/slo/SLOSparklines';
+import CompliancePanel from '@/components/slo/CompliancePanel';
 import SLOViolationAlert from '@/components/slo/SLOViolationAlert';
 import EvolutionTimeline from '@/components/learning/EvolutionTimeline';
 import FailureChainExplorer from '@/components/learning/FailureChainExplorer';
@@ -581,8 +582,9 @@ function SLOView() {
       {/* 시계열 sparkline + burn rate */}
       <SLOSparklines />
       <div className="grid grid-cols-1 md:grid-cols-12 gap-2 md:min-h-[calc(100vh-440px)]">
-        <div className="md:col-span-4 overflow-auto">
+        <div className="md:col-span-4 overflow-auto flex flex-col gap-2">
           <SLODefinitions />
+          <CompliancePanel />
         </div>
         <div className="md:col-span-8 overflow-auto">
           <MicroservicePanel />
