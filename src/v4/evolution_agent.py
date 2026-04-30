@@ -356,8 +356,9 @@ class EvolutionAgent:
                 # 70% 전략 고유 impact, 30% 글로벌 분배 (전략이 applied=True일 때만)
                 fitness_delta = 0.7 * strategy_impact + (0.3 * global_delta if applied else 0.0)
                 old_fitness = strategy.fitness
-                # Exponential moving average
-                strategy.fitness = 0.7 * strategy.fitness + 0.3 * (0.5 + fitness_delta)
+                # Exponential moving average — α=0.5 (이전 0.3은 baseline 0.5에서 평형
+                # 정체. 23 사이클 후 평균 fitness 0.52, 사실상 학습 0이라 α 상향).
+                strategy.fitness = 0.5 * strategy.fitness + 0.5 * (0.5 + fitness_delta)
                 strategy.fitness = max(0.0, min(1.0, strategy.fitness))
 
                 success = applied and fitness_delta > 0
