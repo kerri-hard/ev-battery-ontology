@@ -19,6 +19,7 @@ import SLOViolationAlert from '@/components/slo/SLOViolationAlert';
 import EvolutionTimeline from '@/components/learning/EvolutionTimeline';
 import FailureChainExplorer from '@/components/learning/FailureChainExplorer';
 import CausalChainTracer from '@/components/learning/CausalChainTracer';
+import CounterfactualPanel from '@/components/learning/CounterfactualPanel';
 import TodayHeadline from '@/components/overview/TodayHeadline';
 import ActiveScenarioPanel from '@/components/scenarios/ActiveScenarioPanel';
 import NotificationCenter from '@/components/common/NotificationCenter';
@@ -607,6 +608,7 @@ function LearningView() {
         </div>
         <div className="md:col-span-6 flex flex-col gap-2">
           <PreverifyPanel />
+          <CounterfactualPanel />
           <ResearchProgressPanel />
           <AutonomyHero />
         </div>

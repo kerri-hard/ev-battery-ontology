@@ -309,6 +309,40 @@ async def nl_query(body: dict):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/counterfactual-learning")
+async def list_counterfactual_learning():
+    """누적 CounterfactualLearning 노드 목록 (Learning 페이지용).
+
+    시스템이 시뮬상 더 좋은 액션을 놓친 사례 (missed_value ≥ 0.005).
+    향후 EvolutionAgent / 진단 score 보정 학습 데이터.
+    """
+    if not engine.conn:
+        await engine.initialize()
+    out = []
+    try:
+        r = engine.conn.execute(
+            "MATCH (cfl:CounterfactualLearning) "
+            "RETURN cfl.id, cfl.incident_id, cfl.step_id, "
+            "       cfl.chosen_action, cfl.best_alternative, "
+            "       cfl.missed_value, cfl.created_at "
+            "ORDER BY cfl.created_at DESC LIMIT 50"
+        )
+        while r.has_next():
+            row = r.get_next()
+            out.append({
+                "id": row[0],
+                "incident_id": row[1],
+                "step_id": row[2],
+                "chosen_action": row[3],
+                "best_alternative": row[4],
+                "missed_value": float(row[5] or 0.0),
+                "created_at": row[6],
+            })
+    except Exception as e:
+        return JSONResponse({"error": str(e), "items": [], "count": 0}, status_code=500)
+    return JSONResponse({"items": out, "count": len(out)})
+
+
 @app.get("/api/personnel")
 async def list_personnel():
     """Personnel 노드 목록 (HITL 승인 UI용 식별 dropdown).
