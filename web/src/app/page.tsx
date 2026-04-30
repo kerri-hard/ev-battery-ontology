@@ -25,6 +25,7 @@ import NotificationCenter from '@/components/common/NotificationCenter';
 import KeyboardShortcuts from '@/components/common/KeyboardShortcuts';
 import PageIntent from '@/components/layout/PageIntent';
 import SettingsView from '@/components/settings/SettingsView';
+import NLQuery from '@/components/console/NLQuery';
 import SparklineChart from '@/components/charts/SparklineChart';
 import Badge from '@/components/common/Badge';
 import { apiUrl } from '@/lib/api';
