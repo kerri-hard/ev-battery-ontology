@@ -249,6 +249,26 @@ export interface ExcludedRCACandidate {
   exclusion_reason?: string;
 }
 
+export interface PreverifyCounterfactual {
+  chosen_action: string | null;
+  chosen_expected_delta: number;
+  chosen_score: number;
+  best_alternative: string | null;
+  best_alt_expected_delta: number;
+  best_alt_score: number;
+  missed_value: number;
+  score_gap: number;
+  n_alternatives: number;
+  interpretation: string;
+  ranked_alternatives: Array<{
+    action_type: string;
+    cause_type: string;
+    expected_delta: number;
+    score: number;
+    delta_gap_vs_chosen: number;
+  }>;
+}
+
 export interface HealingIncident {
   id?: string;
   iteration?: number;
@@ -271,6 +291,7 @@ export interface HealingIncident {
   evidence_refs?: string[];
   rca_score_breakdown?: Record<string, number>;
   excluded_candidates?: ExcludedRCACandidate[];
+  preverify_counterfactual?: PreverifyCounterfactual | null;
   risk_level?: string;
   playbook_id?: string;
   playbook_source?: string;

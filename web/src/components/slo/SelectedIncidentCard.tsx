@@ -307,12 +307,39 @@ function DiagnoseSection({ inc }: { inc: HealingIncident }) {
 
 function PreVerifySection({ inc }: { inc: HealingIncident }) {
   const rejected = inc.escalation_reason && /preverify|reject/i.test(inc.escalation_reason);
+  const cf = inc.preverify_counterfactual;
   return (
     <Section title="② PRE-VERIFY" phase="PRE-VERIFY" status={rejected ? 'rejected' : 'pass'}>
       {rejected ? (
         <div className="ds-body text-amber-300">{inc.escalation_reason}</div>
       ) : (
         <div className="ds-body text-emerald-300/80">시뮬레이션 통과 — anti-recurrence 정책 적용</div>
+      )}
+      {cf && cf.n_alternatives > 0 && (
+        <div className="mt-1.5 px-1.5 py-1 rounded bg-cyan-500/5 border-l-2 border-cyan-400/40">
+          <div className="ds-label text-cyan-300/70">
+            만약 다른 액션 골랐다면 (counterfactual)
+          </div>
+          <div className="ds-caption text-white/70 mt-0.5">{cf.interpretation}</div>
+          {cf.ranked_alternatives.slice(0, 2).map((alt, i) => (
+            <div key={i} className="ds-caption text-white/60 mt-0.5">
+              <span className="text-cyan-200/90 font-mono">{alt.action_type}</span>
+              <span className="text-white/40 mx-1">·</span>
+              <span className="font-mono">expected_Δ {alt.expected_delta.toFixed(4)}</span>
+              <span className="text-white/40 mx-1">→</span>
+              <span
+                className={
+                  alt.delta_gap_vs_chosen > 0
+                    ? 'text-amber-300 font-bold'
+                    : 'text-white/50'
+                }
+              >
+                {alt.delta_gap_vs_chosen > 0 ? '+' : ''}
+                {alt.delta_gap_vs_chosen.toFixed(4)} vs 현 선택
+              </span>
+            </div>
+          ))}
+        </div>
       )}
     </Section>
   );
