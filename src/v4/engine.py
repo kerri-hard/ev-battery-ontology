@@ -27,6 +27,7 @@ from v4.llm_analyst import LLMAnalyst
 from v4.llm_agents import PredictiveAgent, NaturalLanguageDiagnoser
 from v4.decision_layer import extend_schema_l4, seed_l4_policy, load_active_policy
 from v4.isa95 import extend_schema_isa95, seed_default_isa95, migrate_area_step_isa95
+from v4.regulation import extend_schema_regulation, seed_default_regulations
 from v4.advanced_detection import AdvancedAnomalyDetector
 from v4.weibull_rul import WeibullRULEstimator, extend_schema_rul_estimate
 from v4.learning_layer import extend_schema_l5
@@ -124,6 +125,9 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
         extend_schema_isa95(self.conn)
         seed_default_isa95(self.conn)
         migrate_area_step_isa95(self.conn)
+        # Regulation / Audit / Compliance — UN R150 / IATF 16949 / EU Battery
+        extend_schema_regulation(self.conn)
+        seed_default_regulations(self.conn)
 
     def _init_agents(self):
         self.sensor_sim = SensorSimulator(self.conn)
