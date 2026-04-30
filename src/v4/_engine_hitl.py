@@ -5,6 +5,7 @@ from datetime import datetime
 
 from v4.decision_layer import update_active_policy
 from v4.isa95 import lookup_personnel, personnel_can_approve_safety
+from v4.regulation import record_audit_trail
 
 
 class HITLMixin:
@@ -122,6 +123,18 @@ class HITLMixin:
             if personnel:
                 audit_extra["personnel_id"] = personnel["id"]
             self._append_hitl_audit("approved", operator, audit_extra, role=role)
+            # AuditTrail 그래프 영속 — 외부 감사 (Regulation/Compliance) 추적
+            try:
+                record_audit_trail(
+                    self.conn,
+                    audit_id=f"AT-{hitl_id}",
+                    event_type="hitl_approved",
+                    target_id=str(action.get("target_step", "")),
+                    personnel_id=personnel["id"] if personnel else None,
+                    details=f"action={action.get('action_type', '?')}, operator={operator}",
+                )
+            except Exception:
+                pass
             self._persist_hitl_runtime_state()
             await self._emit("hitl_resolved", payload)
             return {"ok": True, **payload}

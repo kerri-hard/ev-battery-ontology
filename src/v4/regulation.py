@@ -158,6 +158,64 @@ ACTION_COMPLIANCE_MAP: dict[str, list[str]] = {
 }
 
 
+def record_audit_trail(
+    conn,
+    audit_id: str,
+    event_type: str,
+    target_id: str,
+    personnel_id: str | None,
+    details: str = "",
+    compliance_item_id: str | None = None,
+) -> str | None:
+    """AuditTrail 노드 영속 + (선택) AUDITS 관계로 ComplianceItem 연결.
+
+    HITL 승인/거절, 정책 변경, 거버넌스 이벤트 등 외부 감사 추적용.
+    Personnel 식별 + Regulation 매핑이 결합돼 *외부 감사관*이 한 번에
+    "누가, 언제, 무엇을, 어느 규제에 대해" 조회 가능.
+
+    Returns:
+        AuditTrail 노드 ID 또는 None (실패).
+    """
+    if not audit_id or not event_type:
+        return None
+    from datetime import datetime as _dt
+    now = _dt.now().isoformat()
+    try:
+        # idempotent — 같은 audit_id 재호출 시 skip
+        r = conn.execute(
+            "MATCH (at:AuditTrail {id: $id}) RETURN at.id LIMIT 1",
+            {"id": audit_id},
+        )
+        if r.has_next():
+            return audit_id
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            "CREATE (at:AuditTrail {"
+            "id: $id, event_type: $et, target_id: $tid, "
+            "personnel_id: $pid, timestamp: $ts, details: $dt})",
+            {
+                "id": audit_id, "et": str(event_type), "tid": str(target_id or ""),
+                "pid": str(personnel_id or ""), "ts": now,
+                "dt": str(details)[:500],  # 길이 제한
+            },
+        )
+        if compliance_item_id:
+            try:
+                conn.execute(
+                    "MATCH (at:AuditTrail {id: $aid}), "
+                    "      (c:ComplianceItem {id: $cid}) "
+                    "CREATE (at)-[:AUDITS]->(c)",
+                    {"aid": audit_id, "cid": compliance_item_id},
+                )
+            except Exception:
+                pass
+        return audit_id
+    except Exception:
+        return None
+
+
 def link_action_to_compliance(conn, recovery_action_id: str, action_type: str) -> int:
     """RecoveryAction → ComplianceItem COMPLIES_WITH 관계 자동 생성.
 
