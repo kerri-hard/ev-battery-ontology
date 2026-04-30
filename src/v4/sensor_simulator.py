@@ -152,7 +152,67 @@ class SensorSimulator:
         # 강제 이상 주입 큐: {(step_id, sensor_type): severity}
         self._forced_anomalies = {}
 
+        # Context tracking — Bayesian conditional discovery 데이터 소스.
+        # iteration 별 context 값을 누적해 conditional Granger 마스킹에 사용.
+        # current_iteration → {factor: value}
+        self._context_history: list[dict] = []
+
         self._load_equipment()
+
+    def get_current_context(self, iteration: int) -> dict:
+        """현재 iteration의 context factor 값들 반환.
+
+        Bayesian conditional 인과 발견의 데이터 소스. 향후
+        causal_discovery.discover_with_context 의 bucket_masks 생성에 사용.
+
+        현재 지원 factor:
+        - time_of_day: "day" / "night" (12시간 주기 시뮬)
+        - shift: "morning" / "afternoon" / "night" (8시간 교대)
+        - batch_phase: "early" / "mid" / "late" (50 iter 주기)
+
+        실 시스템에서는 wall clock + actual batch metadata로 대체.
+        """
+        # 24-iter 주기로 day/night (12 iter day + 12 iter night)
+        time_of_day = "day" if (iteration % 24) < 12 else "night"
+        # 8-iter 주기로 3교대
+        shift_idx = (iteration % 24) // 8
+        shift = ["morning", "afternoon", "night"][min(shift_idx, 2)]
+        # 50-iter 주기로 3 phase
+        phase_pos = (iteration % 50) / 50.0
+        if phase_pos < 0.33:
+            batch_phase = "early"
+        elif phase_pos < 0.66:
+            batch_phase = "mid"
+        else:
+            batch_phase = "late"
+        ctx = {
+            "time_of_day": time_of_day,
+            "shift": shift,
+            "batch_phase": batch_phase,
+        }
+        # 누적 (max 200 history)
+        self._context_history.append(ctx)
+        if len(self._context_history) > 200:
+            self._context_history.pop(0)
+        return ctx
+
+    def get_context_masks(self, factor: str) -> dict:
+        """누적 context_history에서 해당 factor의 bucket masks 반환.
+
+        causal_discovery.discover_with_context 의 bucket_masks 입력 형식.
+
+        Returns:
+            {bucket_value: [bool, bool, ...]} — _context_history 순서대로 mask
+        """
+        if not self._context_history:
+            return {}
+        buckets: dict = {}
+        for i, ctx in enumerate(self._context_history):
+            val = ctx.get(factor, "unknown")
+            if val not in buckets:
+                buckets[val] = [False] * len(self._context_history)
+            buckets[val][i] = True
+        return buckets
 
     # ── DB에서 공정/설비 로드 ─────────────────────────────────
 
