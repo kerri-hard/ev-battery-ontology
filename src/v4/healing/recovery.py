@@ -10,6 +10,12 @@ from v4.healing.playbook import RECOVERY_PLAYBOOK, ACTION_DEFAULTS, RISK_NUMERIC
 
 _RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
+# historical success priority — 같은 risk 그룹에서 과거 검증된 액션을 신규 액션보다 우선.
+# attempts ≥ 이 값 + success_rate ≥ 임계 → sort 우선. 그 외 일반.
+# 너무 작으면 cold-start 후보가 항상 후순위. 너무 크면 drift가 안 잡힘.
+_HIST_PRIORITY_MIN_ATTEMPTS = 2
+_HIST_PRIORITY_MIN_SUCCESS_RATE = 0.5
+
 
 class AutoRecoveryAgent:
     """진단 결과로부터 복구 액션을 계획/실행/검증/학습한다."""
@@ -42,9 +48,28 @@ class AutoRecoveryAgent:
 
         actions.sort(key=lambda a: (
             _RISK_ORDER.get(a["risk_level"], 2),
+            self._hist_priority(a["action_type"], a["cause_type"]),
             -a["confidence"],
         ))
         return actions
+
+    def _hist_priority(self, action_type: str, cause_type: str) -> int:
+        """Historical success priority for sort.
+
+        과거 검증된 (성공) 액션을 같은 risk 그룹 내에서 신규 액션보다 우선.
+        backtest drift_warnings 회복: historical 성공 액션이 신규 액션에
+        밀려나지 않도록 보강. _HIST_PRIORITY_MIN_ATTEMPTS/SUCCESS_RATE 임계.
+
+        Returns:
+            -1: historical 성공 (우선)
+             0: 일반 (cold-start 또는 history 부족)
+        """
+        hist = self.success_history.get((action_type, cause_type))
+        if hist and hist["attempts"] >= _HIST_PRIORITY_MIN_ATTEMPTS:
+            rate = hist["successes"] / hist["attempts"]
+            if rate >= _HIST_PRIORITY_MIN_SUCCESS_RATE:
+                return -1
+        return 0
 
     def _build_action(self, conn, step_id, entry, cause_type, cause_confidence, candidate):
         action_type = entry["action"]
