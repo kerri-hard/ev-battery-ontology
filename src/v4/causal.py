@@ -158,6 +158,39 @@ def seed_causal_knowledge(conn, counters):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  EXPLAINABLE RCA — 배제 후보의 *왜* 답
+# ═══════════════════════════════════════════════════════════════
+
+def _explain_exclusion(candidate: dict, top_candidate: dict | None) -> str:
+    """배제된 candidate에 대한 *왜 선택되지 않았는가* 답.
+
+    rca_score_breakdown을 분석해 어느 신호가 약했는지 자연어로 설명.
+    운영자 신뢰 + HITL 검토 보조 (CausalTrace 학술 근거 §9.2).
+
+    Returns:
+        세미콜론 구분 사유 문자열 (예: "신뢰도 격차 큼 (Δ0.18); 과거 매칭 부족").
+    """
+    reasons: list[str] = []
+    breakdown = candidate.get("rca_score_breakdown", {}) or {}
+
+    if top_candidate is not None:
+        gap = float(top_candidate.get("confidence", 0.0)) - float(candidate.get("confidence", 0.0))
+        if gap >= 0.15:
+            reasons.append(f"신뢰도 격차 큼 (Δ{gap:.2f})")
+        elif gap >= 0.05:
+            reasons.append(f"신뢰도 차이 (Δ{gap:.2f})")
+
+    if float(breakdown.get("history_match", 0.0)) < 0.1:
+        reasons.append("과거 매칭 부족")
+    if float(breakdown.get("pattern_similarity", 0.0)) < 0.1:
+        reasons.append("패턴 유사도 낮음")
+    if float(breakdown.get("causal_strength", 0.0)) < 0.1:
+        reasons.append("인과 사슬 약함")
+
+    return "; ".join(reasons) if reasons else "전반적 신뢰도 부족"
+
+
+# ═══════════════════════════════════════════════════════════════
 #  CAUSAL REASONER — 인과관계 기반 RCA 에이전트
 # ═══════════════════════════════════════════════════════════════
 
@@ -283,9 +316,26 @@ class CausalReasoner:
 
         enhanced_candidates.sort(key=lambda x: -x["confidence"])
 
+        # Explainable RCA — 배제된 후보 + 배제 근거 (운영자 신뢰 + HITL 검토 보조).
+        # 선택된 top-5 외 다음 top-5 까지를 *왜 배제됐는지* 근거와 함께 노출.
+        selected = enhanced_candidates[:5]
+        excluded_pool = enhanced_candidates[5:10]
+        top_candidate = selected[0] if selected else None
+        excluded_candidates = [
+            {
+                "cause_type": c.get("cause_type"),
+                "cause_name": c.get("cause_name", ""),
+                "confidence": c.get("confidence"),
+                "rca_score_breakdown": c.get("rca_score_breakdown"),
+                "exclusion_reason": _explain_exclusion(c, top_candidate),
+            }
+            for c in excluded_pool
+        ]
+
         return {
             "step_id": step_id,
-            "candidates": enhanced_candidates[:5],
+            "candidates": selected,
+            "excluded_candidates": excluded_candidates,
             "causal_chains_found": len(causal_chains),
             "failure_chain_matched": matched_chain is not None,
             "matched_chain_id": matched_chain.get("id") if matched_chain else None,
