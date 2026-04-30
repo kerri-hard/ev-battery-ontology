@@ -281,6 +281,34 @@ async def nl_diagnose(body: dict):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/api/nl-query")
+async def nl_query(body: dict):
+    """NL → 안전한 read-only Cypher 변환 + 선택적 실행 (nl2cypher 가드레일).
+
+    Body:
+        {
+          "question": "yield 0.99 미만 step 보여줘",
+          "execute": false  # 기본 dry-run. true면 가드 통과 시 실행
+        }
+
+    Returns:
+        nl2cypher.nl_to_cypher 의 dict (cypher / blocked / rows / ...).
+    """
+    from v4.nl2cypher import nl_to_cypher
+    if not engine.conn:
+        await engine.initialize()
+    body = body or {}
+    question = (body.get("question") or "").strip()
+    execute = bool(body.get("execute", False))
+    if not question:
+        return JSONResponse({"error": "question is required"}, status_code=400)
+    try:
+        result = nl_to_cypher(question, conn=engine.conn, execute=execute)
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/api/phase4-status")
 async def phase4_status():
     """Phase4 LLM/Predictive runtime status."""
