@@ -639,8 +639,8 @@ export type WSCommand =
   | { cmd: 'heal' }
   | { cmd: 'heal_step' }
   | { cmd: 'full_cycle' }
-  | { cmd: 'hitl_approve'; id: string; operator?: string; role?: 'operator' | 'supervisor'; supervisor_token?: string }
-  | { cmd: 'hitl_reject'; id: string; operator?: string; role?: 'operator' | 'supervisor'; supervisor_token?: string }
+  | { cmd: 'hitl_approve'; id: string; operator?: string; role?: 'operator' | 'supervisor'; supervisor_token?: string; personnel_id?: string }
+  | { cmd: 'hitl_reject'; id: string; operator?: string; role?: 'operator' | 'supervisor'; supervisor_token?: string; personnel_id?: string }
   | {
       cmd: 'hitl_policy_update';
       min_confidence: number;

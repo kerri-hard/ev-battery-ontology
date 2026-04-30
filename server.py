@@ -309,6 +309,35 @@ async def nl_query(body: dict):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/personnel")
+async def list_personnel():
+    """Personnel 노드 목록 (HITL 승인 UI용 식별 dropdown).
+
+    ISA-95 PersonnelClass + IATF 16949 트레이닝 매트릭스. 현재는 그래프 노드를
+    그대로 노출 (단일 site 1명 mock). 향후 SSO 통합 시 동적 활성 인증 필터.
+    """
+    if not engine.conn:
+        await engine.initialize()
+    out = []
+    try:
+        r = engine.conn.execute(
+            "MATCH (p:Personnel) "
+            "RETURN p.id, p.name, p.role, p.safety_level_max "
+            "ORDER BY p.id"
+        )
+        while r.has_next():
+            row = r.get_next()
+            out.append({
+                "id": row[0],
+                "name": row[1],
+                "role": row[2],
+                "safety_level_max": row[3],
+            })
+    except Exception as e:
+        return JSONResponse({"error": str(e), "personnel": []}, status_code=500)
+    return JSONResponse({"personnel": out, "count": len(out)})
+
+
 @app.get("/api/phase4-status")
 async def phase4_status():
     """Phase4 LLM/Predictive runtime status."""
@@ -670,12 +699,20 @@ async def websocket_endpoint(ws: WebSocket):
                 hitl_id = msg.get("id", "")
                 operator = msg.get("operator", "operator")
                 role = resolve_operator_role(msg.get("role", "operator"), msg.get("supervisor_token", ""))
-                await engine.resolve_hitl(str(hitl_id), True, str(operator), str(role))
+                personnel_id = msg.get("personnel_id")
+                await engine.resolve_hitl(
+                    str(hitl_id), True, str(operator), str(role),
+                    personnel_id=str(personnel_id) if personnel_id else None,
+                )
             elif cmd == "hitl_reject":
                 hitl_id = msg.get("id", "")
                 operator = msg.get("operator", "operator")
                 role = resolve_operator_role(msg.get("role", "operator"), msg.get("supervisor_token", ""))
-                await engine.resolve_hitl(str(hitl_id), False, str(operator), str(role))
+                personnel_id = msg.get("personnel_id")
+                await engine.resolve_hitl(
+                    str(hitl_id), False, str(operator), str(role),
+                    personnel_id=str(personnel_id) if personnel_id else None,
+                )
             elif cmd == "hitl_policy_update":
                 await engine.update_hitl_policy({
                     "min_confidence": msg.get("min_confidence"),

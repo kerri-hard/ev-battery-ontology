@@ -1,6 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useEngine } from '@/context/EngineContext';
+import { apiUrl } from '@/lib/api';
 import GlassCard from '@/components/common/GlassCard';
 import { EmptyState } from '@/components/common/StateMessages';
 import {
@@ -10,12 +12,40 @@ import {
 } from '@/components/common/severityColors';
 import type { HealingIncident, RecurrenceSignature } from '@/types';
 
+interface PersonnelOption {
+  id: string;
+  name: string;
+  role: string;
+  safety_level_max: string;
+}
+
+function usePersonnel(): PersonnelOption[] {
+  const [list, setList] = useState<PersonnelOption[]>([]);
+  useEffect(() => {
+    let mounted = true;
+    fetch(apiUrl('/api/personnel'))
+      .then((r) => (r.ok ? r.json() : { personnel: [] }))
+      .then((d) => {
+        if (mounted && Array.isArray(d.personnel)) setList(d.personnel);
+      })
+      .catch(() => {
+        // graceful — Personnel 노드 없거나 API 실패 시 빈 목록 (anonymous 동작)
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  return list;
+}
+
 /** 선택된 incident의 진단/PRE-VERIFY/복구/검증/학습 풀스토리 + HITL inline action */
 export default function SelectedIncidentCard() {
   const { state, selectIncident, sendCommand } = useEngine();
   const id = state.selectedIncidentId;
   const incidents = state.healing?.recentIncidents ?? [];
   const inc = id ? incidents.find((i) => i.id === id) : incidents[incidents.length - 1];
+  const personnel = usePersonnel();
+  const [selectedPersonnelId, setSelectedPersonnelId] = useState<string>('');
 
   if (!inc) {
     return (
@@ -40,15 +70,32 @@ export default function SelectedIncidentCard() {
       <Header inc={inc} onClear={() => selectIncident(null)} hasSelection={!!id} />
       {/* 과거 시그니처 inline (FailureChainExplorer 발췌) */}
       {recSig && <RecurrenceInline rec={recSig} />}
-      {/* HITL inline action */}
+      {/* HITL inline action — Personnel 식별 + 자격 검증 (anonymous 호환) */}
       {inc.hitl_required && inc.hitl_id && (
         <HitlActions
           hitlId={inc.hitl_id}
+          personnel={personnel}
+          selectedPersonnelId={selectedPersonnelId}
+          onSelectPersonnel={setSelectedPersonnelId}
           onApprove={() =>
-            sendCommand({ cmd: 'hitl_approve', id: inc.hitl_id!, operator: 'operator-ui' })
+            sendCommand({
+              cmd: 'hitl_approve',
+              id: inc.hitl_id!,
+              operator: selectedPersonnelId
+                ? (personnel.find((p) => p.id === selectedPersonnelId)?.name ?? 'operator-ui')
+                : 'operator-ui',
+              personnel_id: selectedPersonnelId || undefined,
+            })
           }
           onReject={() =>
-            sendCommand({ cmd: 'hitl_reject', id: inc.hitl_id!, operator: 'operator-ui' })
+            sendCommand({
+              cmd: 'hitl_reject',
+              id: inc.hitl_id!,
+              operator: selectedPersonnelId
+                ? (personnel.find((p) => p.id === selectedPersonnelId)?.name ?? 'operator-ui')
+                : 'operator-ui',
+              personnel_id: selectedPersonnelId || undefined,
+            })
           }
         />
       )}
@@ -151,13 +198,20 @@ function RecurrenceInline({ rec }: { rec: RecurrenceSignature }) {
 
 function HitlActions({
   hitlId,
+  personnel,
+  selectedPersonnelId,
+  onSelectPersonnel,
   onApprove,
   onReject,
 }: {
   hitlId: string;
+  personnel: PersonnelOption[];
+  selectedPersonnelId: string;
+  onSelectPersonnel: (id: string) => void;
   onApprove: () => void;
   onReject: () => void;
 }) {
+  const selected = personnel.find((p) => p.id === selectedPersonnelId);
   return (
     <div className="mb-2 px-2 py-2 rounded pill-warning">
       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -166,6 +220,30 @@ function HitlActions({
           <div className="ds-caption font-mono">{hitlId}</div>
         </div>
       </div>
+      {/* Personnel 식별 (선택, anonymous 호환) — 그래프 Personnel 노드 */}
+      {personnel.length > 0 && (
+        <div className="mb-1.5">
+          <select
+            value={selectedPersonnelId}
+            onChange={(e) => onSelectPersonnel(e.target.value)}
+            className="w-full ds-caption bg-white/5 border border-white/10 rounded px-1.5 py-0.5"
+            aria-label="승인자 선택"
+          >
+            <option value="">— 익명 (anonymous, 자격 검증 없음) —</option>
+            {personnel.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.id} · {p.name} · {p.role} (max {p.safety_level_max})
+              </option>
+            ))}
+          </select>
+          {selected && (
+            <div className="ds-caption text-white/60 mt-0.5">
+              자격 max: <span className="text-cyan-300 font-bold">{selected.safety_level_max}</span>
+              {' '}— action.safety_level &gt; {selected.safety_level_max} 이면 자동 deny
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex gap-2">
         <button
           onClick={onApprove}
