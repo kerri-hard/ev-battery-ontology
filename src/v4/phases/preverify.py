@@ -278,6 +278,7 @@ def simulate_action_sequence(engine, actions: list[dict]) -> dict:
             "expected_delta_total": 0.0,
             "cumulative_score": 0.0,
             "sequence_length": 0,
+            "counterfactual": None,
         }
 
     # 각 액션 i가 실제로 실행될 확률 = 이전 모든 액션이 실패할 확률
@@ -301,12 +302,18 @@ def simulate_action_sequence(engine, actions: list[dict]) -> dict:
     confidence = float(first.get("confidence", 0.0))
     cumulative_score = expected_delta_total * confidence * (1.0 - risk_factor)
 
+    # Runtime counterfactual — sims[0] (chosen) vs sims[1:] (alternatives) 비교.
+    # "만약 다른 액션을 골랐다면?" 정량화. 운영자 신뢰 + 학습 큐 후보 식별.
+    from v4.counterfactual import compute_runtime_counterfactual
+    cf = compute_runtime_counterfactual(sims[0], sims[1:]) if len(sims) >= 2 else None
+
     return {
         "steps": sims,
         "cumulative_success_prob": round(cumulative_success, 4),
         "expected_delta_total": round(expected_delta_total, 6),
         "cumulative_score": round(cumulative_score, 6),
         "sequence_length": len(sims),
+        "counterfactual": cf,
     }
 
 
