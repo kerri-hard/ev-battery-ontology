@@ -466,6 +466,23 @@ class EvolutionAgent:
 
     # ── FITNESS EVALUATION ────────────────────────────────
 
+    def _count_recent_cfl(self) -> int:
+        """그래프에서 누적 CounterfactualLearning 노드 수 — playbook 학습 신호.
+
+        engine.conn 가용 시 쿼리, 아니면 0. graceful — 학습 영속화는 부수효과.
+        """
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            return 0
+        try:
+            r = engine.conn.execute("MATCH (cfl:CounterfactualLearning) RETURN count(cfl)")
+            if r.has_next():
+                row = r.get_next()
+                return int(row[0] or 0)
+        except Exception:
+            pass
+        return 0
+
     def _evaluate_strategy_impact(self, strategy: StrategyRecord, result: dict) -> float:
         """전략의 고유 실행 결과에서 impact 점수(-0.3~+0.3)를 산출한다.
 
@@ -497,8 +514,13 @@ class EvolutionAgent:
         if name == "playbook_optimization":
             # 저성과 액션이 식별되었다는 것은 최적화 여지가 있다는 신호
             low_perf = result.get("low_performers", [])
-            # 정보 가치: +0.06, 너무 많으면 시스템 문제로 감점 안 함 (식별 자체가 가치)
-            return 0.06 if low_perf else 0.02
+            base = 0.06 if low_perf else 0.02
+            # CounterfactualLearning 카운트 보강 — 시스템이 더 좋은 액션을 *놓친*
+            # 사례가 많이 누적될수록 playbook 보정 가치 큼 (학습 자동화 신호).
+            # 임계: 5건 이상 += 0.04 (직접 신호), 그 외 0.
+            cfl_count = self._count_recent_cfl()
+            cfl_boost = 0.04 if cfl_count >= 5 else (0.02 if cfl_count >= 1 else 0.0)
+            return min(0.30, base + cfl_boost)
 
         if name == "scenario_difficulty":
             # 난이도 적응은 항상 가치 있는 탐색
