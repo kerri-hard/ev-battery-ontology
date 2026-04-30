@@ -70,6 +70,19 @@ class HITLMixin:
         if personnel:
             audit_extra["personnel_id"] = personnel["id"]
         self._append_hitl_audit("rejected", operator, audit_extra, role=role)
+        # AuditTrail 그래프 영속 — 외부 감사 추적
+        try:
+            action = item.get("action", {}) or {}
+            record_audit_trail(
+                self.conn,
+                audit_id=f"AT-{hitl_id}-rej",
+                event_type="hitl_rejected",
+                target_id=str(action.get("target_step", "")),
+                personnel_id=personnel["id"] if personnel else None,
+                details=f"action={action.get('action_type', '?')}, operator={operator}",
+            )
+        except Exception:
+            pass
         self._persist_hitl_runtime_state()
         await self._emit("hitl_resolved", {
             "id": hitl_id, "status": "rejected", "operator": operator,
@@ -90,6 +103,19 @@ class HITLMixin:
             audit_extra["personnel_id"] = personnel["id"]
             audit_extra["personnel_safety_max"] = personnel.get("safety_level_max")
         self._append_hitl_audit("approve_denied", operator, audit_extra, role=role)
+        # AuditTrail 그래프 영속 — 거부 사유 명시
+        try:
+            action = item.get("action", {}) or {}
+            record_audit_trail(
+                self.conn,
+                audit_id=f"AT-{hitl_id}-deny",
+                event_type="hitl_denied",
+                target_id=str(action.get("target_step", "")),
+                personnel_id=personnel["id"] if personnel else None,
+                details=f"reason={deny_reason}, action={action.get('action_type', '?')}, operator={operator}",
+            )
+        except Exception:
+            pass
         self._persist_hitl_runtime_state()
         await self._emit("hitl_resolved", {
             "id": hitl_id, "status": "denied", "operator": operator,
