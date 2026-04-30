@@ -115,7 +115,10 @@ ev-battery-ontology/
     └── refactor-review/      # 4관점 멀티 에이전트 리팩토링 리뷰
 ```
 
-## 온톨로지 스키마 (L1-L3 통합, 현재)
+## 온톨로지 스키마 (L1-L5 통합, 현재 22+ 노드 / 35+ 관계)
+
+> 정확한 정의는 코드 진실 (`grep 'CREATE NODE TABLE\|CREATE REL TABLE' src/v3/engine.py src/v4/*.py`).
+> 본 섹션은 *카탈로그 요약* — 코드와 어긋날 경우 코드가 우선.
 
 ### L1-L2 노드 (8종)
 - `ProcessArea` — 5 공정영역 (PA-100~500)
@@ -127,24 +130,34 @@ ev-battery-ontology/
 - `AutomationPlan` — 자동화 계획
 - `MaintenancePlan` — 정비 계획
 
-### L3 노드 (인과 추론, `causal.py`/`causal_discovery.py`)
+### L3 노드 (인과 추론, 4종, `causal.py`/`causal_discovery.py`)
 - `CausalRule` — 인과 규칙 (cause_type/effect_type/strength/confirmation_count)
 - `AnomalyPattern` — 이상 패턴 (drift/spike/oscillation/level_shift/variance_increase)
 - `FailureChain` — 과거 확인된 원인→증상 체인 (success_count/fail_count/avg_recovery_sec)
 - `Incident` — 장애 이력 (id/step_id/root_cause/recovery_action/resolved/timestamp)
 
-### L4 노드 (정책/거버넌스, `decision_layer.py`)
+### L4 노드 (정책/거버넌스, 3종+, `decision_layer.py`)
 - `EscalationPolicy` — HITL 정책
 - `RecoveryAction` — 적용된 액션 이력
 - `ProductionBatch` — 트레이서빌리티 단위
-- `RULEstimate` — Weibull RUL 추정
+- (`RULEstimate` — Weibull RUL 추정, `weibull_rul.py` 별도 정의)
 
-### 관계 (L1~L4 통합, 약 20종)
+### L5 추적성·모니터링·메타 (7종, `traceability.py` / `correlation.py` / `evolution_agent.py` 등)
+- `BatteryPassport` — EU Battery Passport (2027 규제 대비) 추적
+- `LotTrace` — 자재 LOT 단위 추적
+- `Alarm` — 실시간 알람 노드
+- `SensorReading` — 센서 측정값 (시계열)
+- `Correlation` — cross-process 상관 분석 결과
+- `OptimizationGoal` — 자가 진화 목표
+- `ResponsePlaybook` — 그래프 기반 회복 플레이북 (L4 우선 조회)
+
+### 관계 (L1~L5 통합, 35+ 종)
 - 공정 흐름: `NEXT_STEP`, `FEEDS_INTO`, `PARALLEL_WITH`, `TRIGGERS_REWORK`
 - 구조: `BELONGS_TO`, `USES_EQUIPMENT`, `CONSUMES`, `REQUIRES_SPEC`
 - L2 확장: `HAS_DEFECT`, `PREVENTS`, `PLANNED_UPGRADE`, `HAS_MAINTENANCE`, `DEPENDS_ON`, `INSPECTS`
-- L3: `CAUSES` (CausalRule→CausalRule), `HAS_CAUSE`, `HAS_PATTERN`, `MATCHED_BY` (Incident→FailureChain), `CHAIN_USES`, `PREDICTS`
-- L4: `ESCALATES_TO`, `RESOLVED_BY`, `HAS_INCIDENT`, `BATCH_INCIDENT`
+- L3 인과: `CAUSES` (CausalRule→CausalRule), `HAS_CAUSE`, `HAS_PATTERN`, `MATCHED_BY` (Incident→FailureChain), `CHAIN_USES`, `PREDICTS`, `CAUSED_BY`
+- L4 거버넌스: `ESCALATES_TO`, `RESOLVED_BY`, `HAS_INCIDENT`, `BATCH_INCIDENT`, `TRIGGERS_ACTION`
+- L5 추적성: `HAS_PASSPORT`, `HAS_ALARM`, `HAS_READING`, `OPTIMIZES`, `CORRELATES_WITH`, `PRODUCED_IN`, `TRACED_TO`, `USES_LOT`, `TRIGGERED_BY`
 
 ## 제조 도메인 컨텍스트
 

@@ -642,7 +642,7 @@ web/src/
 | Multi-step PRE-VERIFY | 단일 액션만 | 중간 |
 | Counterfactual replay ("안 했다면?") | 미구현 | 중간 |
 | Threshold 진화 sparkline | 현재값만 표시 | 낮음 |
-| 실제 OPC-UA 연동 | 인터페이스만 | 중간 |
+| 실제 OPC-UA 연동 | **구현 완료** (asyncua sync client + node read/write, `protocol_bridge.py:OPCUABridge`) — 실 PLC 통합 테스트는 별도 | 중간 |
 | 다공장 연합 온톨로지 | 단일 공장 | 낮음 (Phase 5) |
 | Transformer RUL | Weibull로 강화 | 낮음 |
 
