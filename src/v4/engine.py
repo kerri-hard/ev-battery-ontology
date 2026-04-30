@@ -26,7 +26,7 @@ from v4.scenarios import ScenarioEngine
 from v4.llm_analyst import LLMAnalyst
 from v4.llm_agents import PredictiveAgent, NaturalLanguageDiagnoser
 from v4.decision_layer import extend_schema_l4, seed_l4_policy, load_active_policy
-from v4.isa95 import extend_schema_isa95, seed_default_isa95
+from v4.isa95 import extend_schema_isa95, seed_default_isa95, migrate_area_step_isa95
 from v4.advanced_detection import AdvancedAnomalyDetector
 from v4.weibull_rul import WeibullRULEstimator, extend_schema_rul_estimate
 from v4.learning_layer import extend_schema_l5
@@ -123,6 +123,7 @@ class SelfHealingEngine(HITLMixin, StateMixin, HarnessEngine):
         # ISA-95 (IEC 62264) 4-level 시작점 — Enterprise/Site/EquipmentClass + 기본 시드
         extend_schema_isa95(self.conn)
         seed_default_isa95(self.conn)
+        migrate_area_step_isa95(self.conn)
 
     def _init_agents(self):
         self.sensor_sim = SensorSimulator(self.conn)

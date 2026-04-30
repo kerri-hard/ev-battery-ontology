@@ -154,6 +154,94 @@ def get_default_site() -> dict:
     }
 
 
+def migrate_area_step_isa95(conn) -> dict:
+    """ProcessArea / ProcessStep 에 plant_id / site_id 속성 추가 + 기본값 채움.
+
+    Kuzu의 ALTER TABLE ADD PROPERTY 로 속성 추가 (idempotent — 이미 있으면 skip).
+    그 후 기존 노드에 default site_id/enterprise_id 채움 (이미 채워진 노드는 skip).
+
+    이 마이그레이션 후 다음이 가능:
+    - 다공장 쿼리 필터: MATCH (s:ProcessStep) WHERE s.site_id='SITE-002' ...
+    - IATF 16949 감사: 사이트별 incident 분리 보고
+    - MES/ERP 외부 통합: site_id 매핑
+
+    Returns:
+        {"area_props_added": bool, "step_props_added": bool,
+         "areas_default_filled": int, "steps_default_filled": int}
+    """
+    counters = {
+        "area_props_added": False,
+        "step_props_added": False,
+        "areas_default_filled": 0,
+        "steps_default_filled": 0,
+    }
+
+    # 1) 속성 추가 (idempotent — 이미 있으면 except)
+    try:
+        conn.execute("ALTER TABLE ProcessArea ADD plant_id STRING DEFAULT ''")
+        counters["area_props_added"] = True
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE ProcessArea ADD site_id STRING DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE ProcessStep ADD plant_id STRING DEFAULT ''")
+        counters["step_props_added"] = True
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE ProcessStep ADD site_id STRING DEFAULT ''")
+    except Exception:
+        pass
+
+    # 2) 기본값 채움 — 빈 문자열인 노드만 업데이트 (idempotent)
+    try:
+        r = conn.execute(
+            "MATCH (pa:ProcessArea) WHERE pa.site_id = '' OR pa.site_id IS NULL "
+            "RETURN pa.id"
+        )
+        ids: list[str] = []
+        while r.has_next():
+            ids.append(r.get_next()[0])
+        for aid in ids:
+            try:
+                conn.execute(
+                    f"MATCH (pa:ProcessArea {{id: '{aid}'}}) "
+                    f"SET pa.site_id = '{DEFAULT_SITE_ID}', "
+                    f"    pa.plant_id = '{DEFAULT_ENTERPRISE_ID}'"
+                )
+                counters["areas_default_filled"] += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        r = conn.execute(
+            "MATCH (ps:ProcessStep) WHERE ps.site_id = '' OR ps.site_id IS NULL "
+            "RETURN ps.id"
+        )
+        ids = []
+        while r.has_next():
+            ids.append(r.get_next()[0])
+        for sid in ids:
+            try:
+                conn.execute(
+                    f"MATCH (ps:ProcessStep {{id: '{sid}'}}) "
+                    f"SET ps.site_id = '{DEFAULT_SITE_ID}', "
+                    f"    ps.plant_id = '{DEFAULT_ENTERPRISE_ID}'"
+                )
+                counters["steps_default_filled"] += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return counters
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
