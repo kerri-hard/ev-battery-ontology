@@ -317,8 +317,16 @@ function PreVerifySection({ inc }: { inc: HealingIncident }) {
       )}
       {cf && cf.n_alternatives > 0 && (
         <div className="mt-1.5 px-1.5 py-1 rounded bg-cyan-500/5 border-l-2 border-cyan-400/40">
-          <div className="ds-label text-cyan-300/70">
-            만약 다른 액션 골랐다면 (counterfactual)
+          <div className="ds-label text-cyan-300/70 flex items-center gap-1.5">
+            <span>만약 다른 액션 골랐다면 (counterfactual)</span>
+            {(cf as { is_learning_candidate?: boolean }).is_learning_candidate && (
+              <span
+                className="px-1 py-0.5 rounded bg-amber-500/20 text-amber-200 ds-caption font-bold"
+                title="missed_value 임계 초과 — CounterfactualLearning 노드로 자동 영속, 향후 학습 데이터로 활용"
+              >
+                🎓 학습 후보
+              </span>
+            )}
           </div>
           <div className="ds-caption text-white/70 mt-0.5">{cf.interpretation}</div>
           {cf.ranked_alternatives.slice(0, 2).map((alt, i) => (

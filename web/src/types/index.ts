@@ -267,6 +267,8 @@ export interface PreverifyCounterfactual {
     score: number;
     delta_gap_vs_chosen: number;
   }>;
+  is_learning_candidate?: boolean;
+  learning_threshold?: number;
 }
 
 export interface HealingIncident {
