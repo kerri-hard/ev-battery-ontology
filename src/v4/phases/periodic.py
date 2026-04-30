@@ -60,6 +60,78 @@ async def maybe_discover_causal(engine, it: int) -> None:
     except Exception:
         pass
 
+    # Bayesian conditional discovery — context 분리 Granger.
+    # 별도 try (실패 시 기본 discovery 결과는 보존).
+    try:
+        await _discover_conditional_with_context(engine, it)
+    except Exception:
+        pass
+
+
+async def _discover_conditional_with_context(engine, it: int) -> None:
+    """Context-conditional Granger discovery + ConditionalStrength 영속.
+
+    sensor_simulator의 누적 context_history 가 충분하면 (≥ min_samples × 2)
+    각 context_factor 별 bucket masks 추출 → discover_with_context →
+    record_conditional_strength 자동 영속.
+
+    부수 효과 — 운영 흐름 미차단 (실패 silent skip).
+    """
+    sim = getattr(engine, "sensor_sim", None)
+    if not sim or not hasattr(sim, "get_context_masks"):
+        return
+    history_len = len(getattr(sim, "_context_history", []))
+    if history_len < (engine.causal_discovery.min_samples * 2):
+        return  # 데이터 부족
+
+    from v4.causal import record_conditional_strength
+
+    persisted_count = 0
+    for factor in ("time_of_day", "shift", "batch_phase"):
+        masks = sim.get_context_masks(factor)
+        if len(masks) < 2:
+            continue
+        results = engine.causal_discovery.discover_with_context(
+            engine.correlation_analyzer, factor, masks,
+        )
+        for bucket_value, candidates in results.items():
+            for cand in candidates[:3]:  # 상위 3개만 영속
+                # promoted_rule_id 매핑이 가능한 경우만 (cause_type 기반)
+                # 단순화: cause_type 으로 CausalRule 검색 → record_conditional
+                cause_type = cand.get("cause_type", "")
+                if not cause_type:
+                    continue
+                # CausalRule lookup
+                cr_id = None
+                try:
+                    r = engine.conn.execute(
+                        "MATCH (cr:CausalRule) WHERE cr.cause_type=$ct "
+                        "RETURN cr.id LIMIT 1",
+                        {"ct": cause_type},
+                    )
+                    if r.has_next():
+                        cr_id = r.get_next()[0]
+                except Exception:
+                    continue
+                if not cr_id:
+                    continue
+                # 영속화
+                # f_stat 기반 conditional_prob 추정 (정규화)
+                f_stat = float(cand.get("f_stat", 0.0))
+                cond_prob = max(0.05, min(0.95, 0.5 + min(f_stat, 10.0) / 25.0))
+                cs_id = record_conditional_strength(
+                    engine.conn, cr_id, factor, bucket_value,
+                    cond_prob, sample_count=int(cand.get("n_samples", 1)),
+                )
+                if cs_id:
+                    persisted_count += 1
+
+    if persisted_count > 0:
+        await engine._emit("conditional_strength_discovered", {
+            "iteration": it + 1,
+            "persisted_count": persisted_count,
+        })
+
 
 async def maybe_evolve_agents(engine, it: int) -> None:
     """EvolutionAgent 메타 최적화 사이클 (자체 should_run 정책)."""
