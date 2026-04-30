@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 
 from v4.decision_layer import update_active_policy
+from v4.isa95 import lookup_personnel, personnel_can_approve_safety
 
 
 class HITLMixin:
@@ -15,21 +16,40 @@ class HITLMixin:
         approve: bool,
         operator: str = "operator",
         role: str = "operator",
+        personnel_id: str | None = None,
     ):
-        """HITL 대기 액션을 승인/거절한다."""
+        """HITL 대기 액션을 승인/거절한다.
+
+        personnel_id (선택): Personnel 노드 식별자. 제공 시:
+        - operator audit log에 personnel 정보 영속화
+        - safety_level 검증 (Personnel.safety_level_max < action.safety_level → deny)
+
+        personnel_id 미제공 시 기존 anonymous 동작 (하위 호환).
+        """
         item = self._find_pending_hitl(hitl_id)
         if not item:
             return {"ok": False, "reason": "not_found_or_already_resolved", "id": hitl_id}
 
+        # Personnel 식별 (선택)
+        personnel = lookup_personnel(self.conn, personnel_id) if personnel_id else None
+
         if not approve:
-            return await self._reject_hitl(item, hitl_id, operator, role)
+            return await self._reject_hitl(item, hitl_id, operator, role, personnel=personnel)
 
         # 고위험/저신뢰 액션은 supervisor 이상만 승인 가능
         reason = str(item.get("reason", "") or "")
         if role != "supervisor" and ("high_risk" in reason or "low_confidence" in reason):
-            return await self._deny_hitl(item, hitl_id, operator, role)
+            return await self._deny_hitl(item, hitl_id, operator, role, personnel=personnel)
 
-        return await self._approve_hitl(item, hitl_id, operator, role)
+        # Personnel 안전등급 검증 (식별 시에만 — 미식별은 기존 동작 유지)
+        action_safety = (item.get("action", {}) or {}).get("safety_level")
+        if personnel and not personnel_can_approve_safety(personnel, action_safety):
+            return await self._deny_hitl(
+                item, hitl_id, operator, role, personnel=personnel,
+                deny_reason="personnel_safety_insufficient",
+            )
+
+        return await self._approve_hitl(item, hitl_id, operator, role, personnel=personnel)
 
     def _find_pending_hitl(self, hitl_id: str):
         for h in self.hitl_pending:
@@ -37,39 +57,56 @@ class HITLMixin:
                 return h
         return None
 
-    async def _reject_hitl(self, item, hitl_id, operator, role):
+    async def _reject_hitl(self, item, hitl_id, operator, role, *, personnel: dict | None = None):
         item["status"] = "rejected"
         item["resolved_at"] = datetime.now().isoformat()
         item["operator"] = operator
         item["operator_role"] = role
-        self._append_hitl_audit("rejected", operator, {"hitl_id": hitl_id}, role=role)
+        if personnel:
+            item["personnel_id"] = personnel["id"]
+            item["personnel_name"] = personnel["name"]
+        audit_extra = {"hitl_id": hitl_id}
+        if personnel:
+            audit_extra["personnel_id"] = personnel["id"]
+        self._append_hitl_audit("rejected", operator, audit_extra, role=role)
         self._persist_hitl_runtime_state()
-        await self._emit("hitl_resolved", {"id": hitl_id, "status": "rejected", "operator": operator})
+        await self._emit("hitl_resolved", {
+            "id": hitl_id, "status": "rejected", "operator": operator,
+            "personnel_id": personnel["id"] if personnel else None,
+        })
         return {"ok": True, "status": "rejected", "id": hitl_id}
 
-    async def _deny_hitl(self, item, hitl_id, operator, role):
+    async def _deny_hitl(self, item, hitl_id, operator, role, *,
+                         personnel: dict | None = None, deny_reason: str = "supervisor_required"):
         item["status"] = "denied"
         item["resolved_at"] = datetime.now().isoformat()
         item["operator"] = operator
         item["operator_role"] = role
-        self._append_hitl_audit(
-            "approve_denied", operator,
-            {"hitl_id": hitl_id, "reason": "supervisor_required"},
-            role=role,
-        )
+        if personnel:
+            item["personnel_id"] = personnel["id"]
+        audit_extra = {"hitl_id": hitl_id, "reason": deny_reason}
+        if personnel:
+            audit_extra["personnel_id"] = personnel["id"]
+            audit_extra["personnel_safety_max"] = personnel.get("safety_level_max")
+        self._append_hitl_audit("approve_denied", operator, audit_extra, role=role)
         self._persist_hitl_runtime_state()
         await self._emit("hitl_resolved", {
             "id": hitl_id, "status": "denied", "operator": operator,
-            "reason": "supervisor_required",
+            "reason": deny_reason,
+            "personnel_id": personnel["id"] if personnel else None,
         })
-        return {"ok": False, "status": "denied", "id": hitl_id, "reason": "supervisor_required"}
+        return {"ok": False, "status": "denied", "id": hitl_id, "reason": deny_reason}
 
-    async def _approve_hitl(self, item, hitl_id, operator, role):
+    async def _approve_hitl(self, item, hitl_id, operator, role, *, personnel: dict | None = None):
         action = item.get("action", {})
         item["status"] = "approved"
         item["resolved_at"] = datetime.now().isoformat()
         item["operator"] = operator
         item["operator_role"] = role
+        if personnel:
+            item["personnel_id"] = personnel["id"]
+            item["personnel_name"] = personnel["name"]
+            item["personnel_safety_max"] = personnel.get("safety_level_max")
         try:
             result = self.auto_recovery.execute_recovery(self.conn, action, self.healing_counters)
             payload = {
@@ -79,12 +116,12 @@ class HITLMixin:
                 "action_type": action.get("action_type"),
                 "step_id": action.get("target_step"),
                 "result": result,
+                "personnel_id": personnel["id"] if personnel else None,
             }
-            self._append_hitl_audit(
-                "approved", operator,
-                {"hitl_id": hitl_id, "action_type": action.get("action_type")},
-                role=role,
-            )
+            audit_extra = {"hitl_id": hitl_id, "action_type": action.get("action_type")}
+            if personnel:
+                audit_extra["personnel_id"] = personnel["id"]
+            self._append_hitl_audit("approved", operator, audit_extra, role=role)
             self._persist_hitl_runtime_state()
             await self._emit("hitl_resolved", payload)
             return {"ok": True, **payload}

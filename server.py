@@ -321,9 +321,13 @@ async def hitl_approve(body: dict):
     hitl_id = (body or {}).get("id")
     operator = (body or {}).get("operator", "operator")
     role = resolve_operator_role((body or {}).get("role", "operator"), (body or {}).get("supervisor_token", ""))
+    personnel_id = (body or {}).get("personnel_id")  # 선택 — Personnel 노드 식별
     if not hitl_id:
         return JSONResponse({"error": "id is required"}, status_code=400)
-    res = await engine.resolve_hitl(str(hitl_id), True, str(operator), str(role))
+    res = await engine.resolve_hitl(
+        str(hitl_id), True, str(operator), str(role),
+        personnel_id=str(personnel_id) if personnel_id else None,
+    )
     return JSONResponse(res)
 
 
@@ -332,9 +336,13 @@ async def hitl_reject(body: dict):
     hitl_id = (body or {}).get("id")
     operator = (body or {}).get("operator", "operator")
     role = resolve_operator_role((body or {}).get("role", "operator"), (body or {}).get("supervisor_token", ""))
+    personnel_id = (body or {}).get("personnel_id")
     if not hitl_id:
         return JSONResponse({"error": "id is required"}, status_code=400)
-    res = await engine.resolve_hitl(str(hitl_id), False, str(operator), str(role))
+    res = await engine.resolve_hitl(
+        str(hitl_id), False, str(operator), str(role),
+        personnel_id=str(personnel_id) if personnel_id else None,
+    )
     return JSONResponse(res)
 
 

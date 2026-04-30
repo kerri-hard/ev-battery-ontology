@@ -230,6 +230,54 @@ def get_default_site() -> dict:
     }
 
 
+def lookup_personnel(conn, personnel_id: str) -> dict | None:
+    """Personnel 노드 조회. 없으면 None.
+
+    HITL 승인 시 *식별 가능한 사람* 검증에 사용.
+    """
+    if not personnel_id:
+        return None
+    try:
+        r = conn.execute(
+            "MATCH (p:Personnel {id: $id}) "
+            "RETURN p.id, p.name, p.role, p.safety_level_max LIMIT 1",
+            {"id": personnel_id},
+        )
+        if r.has_next():
+            row = r.get_next()
+            return {
+                "id": row[0],
+                "name": row[1],
+                "role": row[2],
+                "safety_level_max": row[3],
+            }
+    except Exception:
+        pass
+    return None
+
+
+# 안전등급 우선순위 — A 가장 위험, C 가장 낮음. 운영자의 safety_level_max는
+# *권한 가능한 최고 등급*이므로 action.safety_level <= personnel.safety_level_max 일 때만 승인.
+_SAFETY_LEVEL_RANK = {"A": 0, "B": 1, "C": 2}
+
+
+def personnel_can_approve_safety(personnel: dict | None, action_safety_level: str | None) -> bool:
+    """Personnel 의 safety_level_max 가 action 의 safety_level 을 cover 하는가.
+
+    Personnel 미식별 시 True (기존 anonymous 동작 유지 — 통합 게이트는 향후 사이클).
+    Action safety_level 미명시 시 True (기본 안전).
+    """
+    if personnel is None:
+        return True
+    if not action_safety_level:
+        return True
+    p_max = personnel.get("safety_level_max", "C") or "C"
+    p_rank = _SAFETY_LEVEL_RANK.get(p_max, 2)
+    a_rank = _SAFETY_LEVEL_RANK.get(action_safety_level, 2)
+    # personnel rank ≤ action rank 면 OK (A=0이면 모든 등급 cover)
+    return p_rank <= a_rank
+
+
 def migrate_area_step_isa95(conn) -> dict:
     """ProcessArea / ProcessStep 에 plant_id / site_id 속성 추가 + 기본값 채움.
 
