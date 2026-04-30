@@ -125,7 +125,60 @@ class CausalDiscoveryEngine:
         candidates.sort(key=lambda c: -c["direction_strength"])
         return candidates
 
-    # ─��� GRANGER CAUSALITY F-TEST ──────────────────────────
+    def discover_with_context(
+        self,
+        correlation_analyzer,
+        context_factor: str,
+        bucket_masks: dict,
+    ) -> dict:
+        """Context-conditional Granger discovery — Bayesian 시작점.
+
+        bucket_masks 의 각 bucket 별로 시계열을 마스킹해 Granger 별도 실행.
+        결과: bucket 별 candidate 리스트 → 향후 ConditionalStrength 영속.
+
+        Args:
+            correlation_analyzer: CorrelationAnalyzer 인스턴스
+            context_factor: 예 "time_of_day", "batch_id"
+            bucket_masks: bucket_name → 시계열 인덱스별 boolean mask
+
+        Returns:
+            {bucket_name: [candidate_dict, ...]} — 각 bucket의 인과 후보.
+            각 candidate에 context_factor / context_value / n_samples 포함.
+        """
+        if not HAS_SCIPY or not bucket_masks:
+            return {}
+
+        results: dict = {}
+        for bucket_name, mask in bucket_masks.items():
+            sub_candidates: list = []
+            for (key_a, key_b), coeff in correlation_analyzer.known_correlations.items():
+                series_a = correlation_analyzer.series.get(key_a, [])
+                series_b = correlation_analyzer.series.get(key_b, [])
+                n = min(len(series_a), len(series_b), len(mask))
+                if n < self.min_samples:
+                    continue
+                x_sub = [series_a[i] for i in range(n) if mask[i]]
+                y_sub = [series_b[i] for i in range(n) if mask[i]]
+                if len(x_sub) < self.min_samples:
+                    continue
+                result_xy = self.granger_test(x_sub, y_sub, self.max_lag)
+                if result_xy["significant"]:
+                    step_a, sensor_a = key_a.split(":", 1)
+                    step_b, sensor_b = key_b.split(":", 1)
+                    sub_candidates.append({
+                        "source_step": step_a, "source_sensor": sensor_a,
+                        "target_step": step_b, "target_sensor": sensor_b,
+                        "f_stat": result_xy["f_stat"],
+                        "p_value": result_xy["p_value"],
+                        "context_factor": context_factor,
+                        "context_value": bucket_name,
+                        "n_samples": len(x_sub),
+                        "cause_type": f"{sensor_a}_anomaly",
+                        "effect_type": f"{sensor_b}_deviation",
+                    })
+            sub_candidates.sort(key=lambda c: -c["f_stat"])
+            results[bucket_name] = sub_candidates
+        return results
 
     def granger_test(self, x: list, y: list, max_lag: int) -> dict:
         """X가 Y를 Granger-cause하는지 F-test로 검정한다.
