@@ -241,6 +241,14 @@ export interface MetricsHistory {
 
 // ── Healing (v4) ──
 
+export interface ExcludedRCACandidate {
+  cause_type: string;
+  cause_name?: string;
+  confidence?: number;
+  rca_score_breakdown?: Record<string, number>;
+  exclusion_reason?: string;
+}
+
 export interface HealingIncident {
   id?: string;
   iteration?: number;
@@ -262,6 +270,7 @@ export interface HealingIncident {
   matched_pattern_type?: string;
   evidence_refs?: string[];
   rca_score_breakdown?: Record<string, number>;
+  excluded_candidates?: ExcludedRCACandidate[];
   risk_level?: string;
   playbook_id?: string;
   playbook_source?: string;

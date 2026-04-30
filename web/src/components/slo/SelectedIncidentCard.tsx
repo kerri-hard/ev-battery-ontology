@@ -203,6 +203,26 @@ function DiagnoseSection({ inc }: { inc: HealingIncident }) {
       {inc.evidence_refs && inc.evidence_refs.length > 0 && (
         <div className="ds-caption mt-1">증거: {inc.evidence_refs.slice(0, 3).join(' · ')}</div>
       )}
+      {inc.excluded_candidates && inc.excluded_candidates.length > 0 && (
+        <div className="mt-1.5 px-1.5 py-1 rounded bg-amber-500/5 border-l-2 border-amber-400/40">
+          <div className="ds-label text-amber-300/70">왜 다른 후보 아닌가 (배제 사유)</div>
+          <div className="mt-0.5 space-y-0.5">
+            {inc.excluded_candidates.slice(0, 3).map((c, i) => (
+              <div key={i} className="ds-caption text-white/70">
+                <span className="text-amber-200/90 font-mono">
+                  {c.cause_type || '?'}
+                </span>
+                <span className="text-white/40 mx-1">·</span>
+                <span className="font-mono">
+                  {((c.confidence ?? 0) * 100).toFixed(0)}%
+                </span>
+                <span className="text-white/40 mx-1">→</span>
+                <span className="text-white/60">{c.exclusion_reason || '?'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
