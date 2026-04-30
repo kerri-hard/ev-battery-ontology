@@ -40,6 +40,16 @@ _COLD_START_ATTEMPTS = 2  # 이력 < 이 값이면 confidence를 success_prob로
 # replay 경로(replay_n ≥ 2)는 실측 yield delta를 쓰므로 이 환산 불필요.
 _NON_YIELD_PARAM_DISCOUNT = 0.1
 
+# Non-numeric 액션의 yield-equivalent default delta.
+# new_value/old_value가 없어 수치 변화량을 계산할 수 없는 액션 (검사 강화 / 설비 리셋 등)
+# 의 기대 효과를 yield rate 변화 기준으로 환산한 휴리스틱.
+# 너무 크면 시뮬 게이트가 과도하게 통과시키고, 너무 작으면 score=0으로 항상 reject되어
+# historical 성공 액션이 drift로 분류된다 (backtest CI 게이트 위반).
+_NON_NUMERIC_DEFAULT_DELTA: dict[str, float] = {
+    "INCREASE_INSPECTION": 0.002,  # 검사 강화 → 결함 검출률/yield 누적 효과
+    "EQUIPMENT_RESET": 0.004,      # 리셋 → 설비 안정화 (ADJUST_PARAMETER 보다 강한 효과)
+}
+
 # Replay-based simulation — 과거 healing_history에서 같은 (step, action, cause) 결과로 예측
 _REPLAY_MIN_SAMPLES = 2   # 이 값 이상이면 replay, 미만이면 휴리스틱 fallback
 
@@ -343,14 +353,16 @@ def _hist_attempts(engine, action_type: str, cause_type: str) -> int:
 def _estimate_param_delta(action: dict) -> float:
     """액션이 만들 파라미터 변화량 (yield-equivalent scale).
 
-    plan_recovery에서 이미 new_value/old_value 채워줌. 없으면 0.
-    Non-numeric 액션(INCREASE_INSPECTION/MATERIAL_SWITCH/ESCALATE)은 0.
+    plan_recovery에서 이미 new_value/old_value 채워줌.
+    Non-numeric 액션은 action_type 기반 default heuristic 사용
+    (이전엔 0이라 score=0 → historical 성공 액션이 항상 drift로 분류됨).
     Non-yield param(OEE 등)은 leading indicator라 yield 직접 영향이 작음 → 환산.
     """
     new_value = action.get("new_value")
     old_value = action.get("old_value")
     if new_value is None or old_value is None:
-        return 0.0
+        action_type = action.get("action_type", "")
+        return _NON_NUMERIC_DEFAULT_DELTA.get(action_type, 0.0)
     try:
         delta = float(new_value) - float(old_value)
     except (TypeError, ValueError):
