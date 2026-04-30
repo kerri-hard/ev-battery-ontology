@@ -39,6 +39,7 @@ async def run(engine, it: int, delay: float, anomalies: list, diagnoses: list,
         _link_escalation(engine, incident, rr)
         _link_step_to_incident(engine, incident, anomaly.get("step_id", "unknown"))
         _link_recovery_action(engine, incident, rr)
+        _record_counterfactual_learning_if_candidate(engine, incident)
         l3_links_created += _strengthen_l3_links(engine, incident, anomaly)
 
     await engine._emit("learn_done_healing", {
@@ -153,6 +154,28 @@ def _record_incident(engine, it: int, anomaly: dict, diagnosis: dict,
 def _update_recurrence_tracker(engine, incident: dict, auto_recovered: bool) -> None:
     """anti-recurrence 정책의 데이터 소스. v4.recurrence.update_tracker로 위임."""
     _update_recurrence(engine.recurrence_tracker, incident, auto_recovered)
+
+
+def _record_counterfactual_learning_if_candidate(engine, incident: dict) -> None:
+    """Counterfactual 결과가 학습 후보 (missed_value 임계 통과) 면 그래프에 영속.
+
+    incident.preverify_counterfactual.is_learning_candidate=True 일 때 실행.
+    learning_layer.record_counterfactual_learning 위임 (idempotent + graceful).
+    실패 시 silent skip — 학습 큐 영속이 운영 흐름을 막아선 안 됨.
+    """
+    cf = incident.get("preverify_counterfactual") if isinstance(incident, dict) else None
+    if not cf or not cf.get("is_learning_candidate"):
+        return
+    try:
+        from v4.learning_layer import record_counterfactual_learning
+        record_counterfactual_learning(
+            engine.conn,
+            str(incident.get("id", "")),
+            str(incident.get("step_id", "")),
+            cf,
+        )
+    except Exception:
+        pass
 
 
 def _persist_incident_node(engine, incident: dict, auto_recovered: bool) -> None:
